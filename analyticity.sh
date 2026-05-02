@@ -13,17 +13,26 @@ usage() {
   cat <<EOF
 Usage: $(basename "$0") <command> [options]
 
-  City app services (api, traffic-jams-backend, admin-backend, ui):
+  City services (infrastructure + api + ui — all in one compose per city):
     list                         List all configured cities
     setup   <city>               Create a new city from template
-    start   [city|--all]         Start app services
-    stop    [city|--all]         Stop app services
-    restart [city|--all]         Restart app services
-    pull    [city|--all]         Pull latest images from registry
-    update  [city|--all]         Pull + restart
+    start   <city|--all> [profile]   Start services (optional compose profile)
+    stop    <city|--all>         Stop all services (keeps volumes/data)
+    restart <city|--all> [profile]   Restart services
+    pull    <city|--all>         Pull latest images from registry
+    update  <city|--all>         Pull + restart
     logs    <city> [service]     Tail logs (optionally one service)
-    status  [city|--all]         Show running containers
+    status  <city|--all>         Show running containers
     sync                         Advance submodules to latest tracked branch
+
+  Profiles (for start/restart):
+    (none)      core only: postgres-timescale, redpanda + app services
+    tools       + pgadmin (port 5050), redpanda-console (port 8080)
+    extract     + waze-feed, ndic-closures, police-accidents
+    transform   + db-migrate, all transformers, event-linker
+    apps        extract + transform
+    mon         + otel, jaeger, prometheus, grafana
+    all         everything
 
   Central DB (shared, runs once per server):
     db:start                     Start central DB + pgAdmin
@@ -32,32 +41,15 @@ Usage: $(basename "$0") <command> [options]
     db:logs                      Tail central DB logs
     db:status                    Show central DB containers
 
-  Data model / local city stack (TimescaleDB + Redpanda + extractors):
-    data:up       <city> [profile]   Start data stack  (default profile: infra)
-    data:down     <city>             Stop and remove volumes
-    data:restart  <city> [profile]   Restart data stack
-    data:status   <city>             Show data stack containers
-    data:logs     <city> [service]   Tail data stack logs
-    data:topics   <city>             List Kafka topics in Redpanda
-
-  Profiles for data:up / data:restart:
-    infra       postgres-timescale + redpanda  (default)
-    tools       + pgadmin, redpanda-console
-    extract     + waze-feed, ndic-closures, police-accidents
-    transform   + db-migrate, all transformers, event-linker
-    apps        extract + transform
-    mon         + otel, jaeger, prometheus, grafana
-    all         everything
-
 Examples:
   $(basename "$0") db:start
   $(basename "$0") setup orp_liberec
-  $(basename "$0") data:up brno infra
-  $(basename "$0") data:up brno apps
-  $(basename "$0") start brno
+  $(basename "$0") start brno              # core infra + app services
+  $(basename "$0") start brno extract      # + waze, ndic, police extractors
+  $(basename "$0") start brno apps         # + all extractors + transformers
   $(basename "$0") update --all
   $(basename "$0") logs brno api
-  $(basename "$0") data:logs brno waze-feed
+  $(basename "$0") logs brno waze-feed
 EOF
   exit 1
 }
@@ -96,6 +88,7 @@ dc_db() {
   docker compose \
     --project-name "analyticity" \
     -f "$DB_COMPOSE" \
+    -f "$ROOT/db/pgadmin-override.yml" \
     "$@"
 }
 
@@ -154,17 +147,26 @@ cmd_setup() {
   echo "Fill in credentials: $dir/.env  (gitignored, never committed)"
 }
 
-cmd_start()   { local city="$1"; require_city "$city"; require_env "$city"; dc "$city" up -d; }
-cmd_stop()    { local city="$1"; require_city "$city"; dc "$city" down; }
-cmd_restart() { local city="$1"; require_city "$city"; require_env "$city"; dc "$city" restart; }
-cmd_pull()    { local city="$1"; require_city "$city"; require_env "$city"; dc "$city" pull; }
-cmd_update()  { local city="$1"; cmd_pull "$city"; cmd_restart "$city"; }
-cmd_status()  { local city="$1"; require_city "$city"; dc "$city" ps; }
+cmd_start() {
+  local city="$1"; local profile="${2:-all}"
+  require_city "$city"; require_env "$city"
+  dc "$city" --profile "$profile" up -d
+}
+
+cmd_stop()    { local city="$1"; require_city "$city"; dc "$city" --profile all down; }
+cmd_restart() {
+  local city="$1"; local profile="${2:-all}"
+  require_city "$city"; require_env "$city"
+  dc "$city" --profile "$profile" restart
+}
+cmd_pull()    { local city="$1"; require_city "$city"; require_env "$city"; dc "$city" --profile all pull; }
+cmd_update()  { local city="$1"; local profile="${2:-}"; cmd_pull "$city"; cmd_restart "$city" "$profile"; }
+cmd_status()  { local city="$1"; require_city "$city"; dc "$city" --profile all ps; }
 
 cmd_logs() {
   local city="${1:?city name required}"; shift
   require_city "$city"
-  dc "$city" logs -f "$@"
+  dc "$city" --profile all logs -f "$@"
 }
 
 cmd_sync() {
@@ -194,56 +196,10 @@ cmd_db_restart() { dc_db restart; }
 cmd_db_logs()    { dc_db logs -f "$@"; }
 cmd_db_status()  { dc_db ps; }
 
-# ── data model commands ───────────────────────────────────────────────────────
-
-cmd_data_up() {
+cmd_topics() {
   local city="${1:?city name required}"
-  local profile="${2:-infra}"
-  require_city "$city"; require_env "$city"; require_data_model
-
-  if [[ "$profile" == "infra" ]]; then
-    # infra = core services only, no profile flag needed
-    dc_data "$city" up -d
-  else
-    dc_data "$city" --profile "$profile" up -d
-  fi
-}
-
-cmd_data_down() {
-  local city="${1:?city name required}"
-  require_data_model
-  dc_data "$city" --profile all down -v
-}
-
-cmd_data_restart() {
-  local city="${1:?city name required}"
-  local profile="${2:-infra}"
-  require_city "$city"; require_env "$city"; require_data_model
-
-  if [[ "$profile" == "infra" ]]; then
-    dc_data "$city" restart
-  else
-    dc_data "$city" --profile "$profile" restart
-  fi
-}
-
-cmd_data_status() {
-  local city="${1:?city name required}"
-  require_data_model
-  dc_data "$city" --profile all ps -a
-}
-
-cmd_data_logs() {
-  local city="${1:?city name required}"; shift
-  require_data_model
-  dc_data "$city" --profile all logs -f "$@"
-}
-
-cmd_data_topics() {
-  local city="${1:?city name required}"
-  require_data_model
-  docker exec "$(dc_data "$city" --profile all ps -q redpanda 2>/dev/null || echo redpanda)" \
-    rpk topic list --brokers=redpanda:9092
+  require_city "$city"
+  docker exec "analyticity-${city}-redpanda-1" rpk topic list --brokers=redpanda:9092
 }
 
 # ── dispatch ──────────────────────────────────────────────────────────────────
@@ -252,22 +208,25 @@ cmd_data_topics() {
 COMMAND="$1"; shift
 
 case "$COMMAND" in
-  list)          cmd_list ;;
-  sync)          cmd_sync ;;
-  setup)         cmd_setup "${1:-}" ;;
-  logs)          cmd_logs "${1:-}" "${@:2}" ;;
-  db:start)      cmd_db_start ;;
-  db:stop)       cmd_db_stop ;;
-  db:restart)    cmd_db_restart ;;
-  db:logs)       cmd_db_logs "$@" ;;
-  db:status)     cmd_db_status ;;
-  data:up)       cmd_data_up "${1:-}" "${2:-infra}" ;;
-  data:down)     cmd_data_down "${1:-}" ;;
-  data:restart)  cmd_data_restart "${1:-}" "${2:-infra}" ;;
-  data:status)   cmd_data_status "${1:-}" ;;
-  data:logs)     cmd_data_logs "${1:-}" "${@:2}" ;;
-  data:topics)   cmd_data_topics "${1:-}" ;;
-  start|stop|restart|pull|update|status)
+  list)       cmd_list ;;
+  sync)       cmd_sync ;;
+  setup)      cmd_setup "${1:-}" ;;
+  logs)       cmd_logs "${1:-}" "${@:2}" ;;
+  topics)     cmd_topics "${1:-}" ;;
+  db:start)   cmd_db_start ;;
+  db:stop)    cmd_db_stop ;;
+  db:restart) cmd_db_restart ;;
+  db:logs)    cmd_db_logs "$@" ;;
+  db:status)  cmd_db_status ;;
+  start|restart|update)
+    TARGET="${1:---all}"; PROFILE="${2:-}"
+    if [[ "$TARGET" == "--all" ]]; then
+      each_city "cmd_$COMMAND"
+    else
+      "cmd_$COMMAND" "$TARGET" "$PROFILE"
+    fi
+    ;;
+  stop|pull|status)
     TARGET="${1:---all}"
     if [[ "$TARGET" == "--all" ]]; then
       each_city "cmd_$COMMAND"

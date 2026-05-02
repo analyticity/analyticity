@@ -1,9 +1,27 @@
 name: analyticity-brno
 
+# Pulls in the full data model stack (TimescaleDB, Redpanda, extractors,
+# transformers, tools, monitoring). Services with profiles are started only
+# when the profile is active — default is "all" via analyticity.sh.
+include:
+  - path: ../../sources/data_model/infrastructure/compose/dev/docker-compose.yml
+    project_directory: ../../sources/data_model/infrastructure/compose/dev
+
 x-common-env: &common-env
   env_file: .env
 
+x-app-depends: &app-depends
+  # Wait for TimescaleDB to be ready and migrations to complete before
+  # starting any app service. db-migrate dependency is ignored when the
+  # transform/apps/all profile is not active.
+  postgres-timescale:
+    condition: service_healthy
+  db-migrate:
+    condition: service_completed_successfully
+
 services:
+
+  # ── Application services ─────────────────────────────────────────────────────
 
   api:
     image: ${REGISTRY:-ghcr.io/analyticity}/api:${IMAGE_TAG:-latest}
@@ -11,7 +29,12 @@ services:
     <<: *common-env
     ports:
       - "${API_PORT:-8000}:8000"
+    depends_on:
+      <<: *app-depends
+      redpanda:
+        condition: service_healthy
     networks:
+      - default
       - analyticity-network
 
   traffic-jams-backend:
@@ -20,7 +43,12 @@ services:
     <<: *common-env
     ports:
       - "${TRAFFIC_BACKEND_PORT:-8081}:8081"
+    depends_on:
+      <<: *app-depends
+      redpanda:
+        condition: service_healthy
     networks:
+      - default
       - analyticity-network
 
   admin-backend:
@@ -29,10 +57,22 @@ services:
     <<: *common-env
     ports:
       - "${ADMIN_BACKEND_PORT:-8082}:8082"
+    depends_on:
+      postgres-timescale:
+        condition: service_healthy
     networks:
+      - default
       - analyticity-network
 
-  # bp-ux-ui: pridať keď bude UI repo nalinkované
+  bp-ux-ui:
+    image: ${REGISTRY:-ghcr.io/analyticity}/bp-ux-ui:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://127.0.0.1:8000/api/v1}
+    ports:
+      - "${UI_PORT:-80}:80"
+    networks:
+      - analyticity-network
 
 networks:
   analyticity-network:
