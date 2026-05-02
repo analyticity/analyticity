@@ -1,0 +1,4 @@
+[submodule "db"]
+	path = db
+	url = git@github.com:analyticity/central_analyticity_db.git
+	branch = deploy
