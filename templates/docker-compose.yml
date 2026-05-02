@@ -5,7 +5,21 @@ x-common-env: &common-env
 
 services:
 
-  # ── Application services ────────────────────────────────────────────────────
+  # ── City-local database ──────────────────────────────────────────────────────
+
+  local_db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB_BRNO}
+      POSTGRES_USER: ${POSTGRES_USER_BRNO}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD_BRNO}
+    volumes:
+      - local_db_data:/var/lib/postgresql/data
+    networks:
+      - analyticity-network
+
+  # ── Application services ─────────────────────────────────────────────────────
 
   api:
     image: ${REGISTRY:-ghcr.io/analyticity}/api:${IMAGE_TAG:-latest}
@@ -13,6 +27,8 @@ services:
     <<: *common-env
     ports:
       - "${API_PORT:-8000}:8000"
+    depends_on:
+      - local_db
     networks:
       - analyticity-network
 
@@ -22,6 +38,8 @@ services:
     <<: *common-env
     ports:
       - "${TRAFFIC_BACKEND_PORT:-8081}:8081"
+    depends_on:
+      - local_db
     networks:
       - analyticity-network
 
@@ -50,3 +68,6 @@ services:
 networks:
   analyticity-network:
     external: true
+
+volumes:
+  local_db_data:

@@ -6,3 +6,47 @@
 	path = sources/backend
 	url = git@github.com:analyticity/api.git
 	branch = deploy
+[submodule "sources/ui"]
+	path = sources/ui
+	url = git@github.com:analyticity/bp_ux_ui.git
+	branch = master
+[submodule "sources/data_model/infrastructure"]
+	path = sources/data_model/infrastructure
+	url = git@github.com:DP-Traffic/infrastructure.git
+	branch = main
+[submodule "sources/data_model/event_linker"]
+	path = sources/data_model/event_linker
+	url = git@github.com:DP-Traffic/event_linker.git
+	branch = main
+[submodule "sources/data_model/police_accidents_extractor"]
+	path = sources/data_model/police_accidents_extractor
+	url = git@github.com:DP-Traffic/police_accidents_extractor.git
+	branch = main
+[submodule "sources/data_model/jams_transformers"]
+	path = sources/data_model/jams_transformers
+	url = git@github.com:DP-Traffic/jams_transformers.git
+	branch = main
+[submodule "sources/data_model/alerts_transformator"]
+	path = sources/data_model/alerts_transformator
+	url = git@github.com:DP-Traffic/alerts_transformator.git
+	branch = main
+[submodule "sources/data_model/closures-transformer"]
+	path = sources/data_model/closures-transformer
+	url = git@github.com:DP-Traffic/closures-transformer.git
+	branch = main
+[submodule "sources/data_model/accidents-transformer"]
+	path = sources/data_model/accidents-transformer
+	url = git@github.com:DP-Traffic/accidents-transformer.git
+	branch = main
+[submodule "sources/data_model/db_migrate"]
+	path = sources/data_model/db_migrate
+	url = git@github.com:DP-Traffic/db_migrate.git
+	branch = main
+[submodule "sources/data_model/ndic_closures"]
+	path = sources/data_model/ndic_closures
+	url = git@github.com:DP-Traffic/ndic_closures.git
+	branch = main
+[submodule "sources/data_model/waze"]
+	path = sources/data_model/waze
+	url = git@github.com:DP-Traffic/waze.git
+	branch = main
