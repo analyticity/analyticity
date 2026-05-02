@@ -2,3 +2,7 @@
 	path = db
 	url = git@github.com:analyticity/central_analyticity_db.git
 	branch = deploy
+[submodule "sources/backend"]
+	path = sources/backend
+	url = git@github.com:analyticity/api.git
+	branch = deploy

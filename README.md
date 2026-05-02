@@ -1,167 +1,181 @@
 # Analyticity — Central Deployment Repository
 
-This is the top-level operations repository for the Analyticity platform.  
-It does **not** contain source code — it wires together the other repos and manages city deployments.
+Top-level operačné repo pre platformu Analyticity.  
+**Neobsahuje zdrojový kód** — prepája ostatné repozitáre a riadi nasadenie miest.
 
-## Repository structure
+---
+
+## Štruktúra repozitára
 
 ```
 analyticity/
-├── analyticity.sh          # main management script
+├── analyticity.sh              # hlavný riadiaci skript
 ├── cities/
-│   ├── brno/               # one folder per city
+│   ├── SETUP_CITY.md           # podrobný postup nasadenia mesta  ← čítaj toto
+│   ├── brno/
 │   │   ├── docker-compose.yml
-│   │   ├── .env.example    # template — commit this
-│   │   └── .env            # real credentials — gitignored, never commit
+│   │   ├── .env.example        # šablóna — commitnutá
+│   │   └── .env                # reálne heslá — gitignored, nikdy necommituj
 │   └── orp_most/
 │       ├── docker-compose.yml
 │       ├── .env.example
 │       └── .env
-├── db/                     # git submodule — central DB (branch: deploy)
-├── sources/                # git submodule — source code / packages repo
-└── templates/              # skeleton used by `setup` command
+├── db/                         # submodule: centrálna DB  (branch: deploy)
+├── sources/
+│   └── backend/                # submodule: zdrojáky API  (github.com/analyticity/api)
+└── templates/                  # šablóna pre nové mestá (používa `setup`)
 ```
 
-### Submodules
+---
 
-| Path | Purpose | Tracked branch |
-|------|---------|----------------|
-| `db/` | Centrálna PostgreSQL+PostGIS DB — beží raz, zdieľaná všetkými mestami | `deploy` |
-| `sources/` | Zdrojové kódy — CI z nich builduje ghcr.io images | TBD |
+## Submoduly
 
-After cloning, initialise submodules:
+| Cesta | Repo | Sledovaná vetva | Účel |
+|-------|------|----------------|------|
+| `db/` | `analyticity/central_analyticity_db` | `deploy` | Centrálna PostgreSQL+PostGIS DB — beží raz pre všetky mestá |
+| `sources/backend/` | `analyticity/api` | `main` | Zdrojové kódy — CI z nich builduje ghcr.io images |
+
+Po klonovaní inicializuj submoduly:
 
 ```bash
 git submodule update --init --recursive
 ```
 
-## Architecture
+---
+
+## Architektúra
 
 ```
-                  ┌─────────────────────────────────┐
-                  │        analyticity-network        │  (Docker external network)
-                  │                                   │
-                  │  ┌──────────────┐                 │
-                  │  │  db_central  │  ← runs once    │
-                  │  │  (PostGIS)   │    on the server │
-                  │  └──────────────┘                 │
-                  │        ▲       ▲                  │
-                  │        │       │                  │
-                  │  ┌─────┴──┐ ┌──┴──────┐          │
-                  │  │  brno  │ │orp_most │  ...      │
-                  │  │services│ │services │          │
-                  │  └────────┘ └─────────┘          │
-                  └─────────────────────────────────┘
+                  ┌──────────────────────────────────────────┐
+                  │           analyticity-network             │
+                  │                                           │
+                  │   ┌──────────────┐                        │
+                  │   │  db_central  │  ← jedna inštancia     │
+                  │   │  (PostGIS)   │    pre celý server      │
+                  │   └──────────────┘                        │
+                  │     ▲        ▲                            │
+                  │     │        │  (AdminBackend z každého mesta)
+                  │                                           │
+                  │  ┌──────────────┐  ┌──────────────┐      │
+                  │  │     brno     │  │   orp_most   │ ...  │
+                  │  │  api         │  │  api         │      │
+                  │  │  traffic-jams│  │  traffic-jams│      │
+                  │  │  admin       │  │  admin       │      │
+                  │  │  ui          │  │  ui          │      │
+                  │  │  local_db ←──┼──┼──────────────┘      │
+                  │  └──────────────┘  (každé mesto má vlastnú local_db)
+                  └──────────────────────────────────────────┘
 ```
 
-Každé mesto beží ako samostatná sada kontajnerov na rovnakej `analyticity-network` Docker sieti.  
-Centrálna DB (`db_central`) beží raz — mestá sa k nej pripájajú cez container name.
+Každé mesto tvorí samostatnú skupinu kontajnerov pomenovaných  
+`analyticity-<mesto>-<service>-1`.
 
-## Prerequisites
+---
+
+## Packages v `sources/backend`
+
+| Package | Adresár | DB | Popis |
+|---------|---------|----|-------|
+| **api** | `api/`, `core/`, `db/`, `modules/` | city-local | Hlavné FastAPI — mapa, grafy, kontakt |
+| **AdminBackend** | `AdminBackend/` | centrálna | Správa miest, používateľov, nastavení |
+| **TrafficJamsBackend** | `TrafficJamsBackend/` | city-local | Analýza nehôd, clustering, ML predikcia |
+
+---
+
+## Predpoklady
 
 - Docker + Docker Compose v2
-- Docker network `analyticity-network` (vytvor raz na serveri):
-  ```bash
-  docker network create analyticity-network
-  ```
-- Prístup ku `ghcr.io/analyticity` — prihlás sa PAT-om so scopom `read:packages`:
+- Docker network (raz na serveri): `docker network create analyticity-network`
+- Prístup ku `ghcr.io/analyticity`:
   ```bash
   echo "<PAT>" | docker login ghcr.io -u <github-username> --password-stdin
   ```
 
-## Quick start — nový server
+---
 
-### 1. Centrálna DB (raz)
+## Rýchly štart
+
+### 1. Klon s submodulmi
 
 ```bash
-git clone --recurse-submodules git@github.com:Analyticity/analyticity.git
+git clone --recurse-submodules git@github.com:analyticity/analyticity.git
 cd analyticity
-
-# Nakonfiguruj centrálnu DB
-cp db/centralDbCreation/.env.example db/centralDbCreation/.env
-nano db/centralDbCreation/.env   # nastav heslo a názov DB
-
-# Spusti centrálnu DB
-docker compose -f db/centralDbCreation/docker-compose.yml up -d
 ```
 
-### 2. Pridaj mesto
+### 2. Centrálna DB  _(raz pre celý server)_
 
 ```bash
-# Vyplň .env (vygenerovaný automaticky príkazom setup)
-nano cities/brno/.env   # doplň POSTGRES_PASSWORD_CENTRAL a porty
+cp db/centralDbCreation/.env.example db/centralDbCreation/.env
+nano db/centralDbCreation/.env    # nastav heslo
 
-# Spusti
-./analyticity.sh start brno
+./analyticity.sh db:start
 ```
 
-## analyticity.sh — command reference
+### 3. Nové mesto
+
+```bash
+./analyticity.sh setup orp_liberec
+nano cities/orp_liberec/.env      # vyplň podľa cities/SETUP_CITY.md
+./analyticity.sh start orp_liberec
+```
+
+> Podrobný postup s popisom každej premennej: **[cities/SETUP_CITY.md](cities/SETUP_CITY.md)**
+
+---
+
+## analyticity.sh — prehľad príkazov
 
 ```
 ./analyticity.sh <command> [options]
 
-  list                    Zobraz zoznam nakonfigurovaných miest
-  setup   <city>          Vytvor nové mesto zo šablóny
-  sync                    Posuň submoduly na latest commit sledovanej vetvy
-  start   [city|--all]    Spusti služby
-  stop    [city|--all]    Zastav služby
-  restart [city|--all]    Reštartuj služby
-  pull    [city|--all]    Stiahni najnovšie images z registry
-  update  [city|--all]    Sync submoduly + pull images + restart
-  logs    <city> [svc]    Zobraz logy (voliteľne iba jednej služby)
-  status  [city|--all]    Zobraz bežiace kontajnery
+  Mestá:
+    list                    Zoznam nakonfigurovaných miest
+    setup   <city>          Vytvor nové mesto zo šablóny
+    start   [city|--all]    Spusti služby
+    stop    [city|--all]    Zastav služby
+    restart [city|--all]    Reštartuj služby
+    pull    [city|--all]    Stiahni najnovšie images z registry
+    update  [city|--all]    Pull images + restart
+    logs    <city> [svc]    Zobraz logy (voliteľne iba jednej služby)
+    status  [city|--all]    Zobraz bežiace kontajnery
+
+  Centrálna DB:
+    db:start                Spusti centrálnu DB
+    db:stop                 Zastav centrálnu DB
+    db:restart              Reštartuj centrálnu DB
+    db:logs                 Logy centrálnej DB
+    db:status               Stav centrálnej DB
+
+  Submoduly:
+    sync                    Posuň submoduly na latest commit sledovanej vetvy
 ```
 
-### Common workflows
+### Časté operácie
 
 ```bash
 # Nasadiť novú verziu do všetkých miest
 ./analyticity.sh update --all
 
-# Nasadiť iba do jedného mesta
-./analyticity.sh update brno
-
-# Pridať nové mesto
+# Pridať nové mesto  (detaily v cities/SETUP_CITY.md)
 ./analyticity.sh setup orp_liberec
-nano cities/orp_liberec/.env      # doplň heslá a porty
+nano cities/orp_liberec/.env
 ./analyticity.sh start orp_liberec
-
-# Skontrolovať čo beží všade
-./analyticity.sh status --all
 
 # Sledovať logy API pre brno
 ./analyticity.sh logs brno api
+
+# Stav všetkého
+./analyticity.sh status --all
+./analyticity.sh db:status
 ```
 
-## Environment variables (.env)
-
-Každé mesto má vlastný `.env` (gitignored — nikdy necommituj).  
-Hodnoty `POSTGRES_*_CENTRAL` musia byť rovnaké ako v `db/centralDbCreation/.env`.
-
-| Variable | Popis |
-|----------|-------|
-| `REGISTRY` | Image registry (default `ghcr.io/analyticity`) |
-| `IMAGE_TAG` | Tag image na nasadenie (default `latest`) |
-| `API_PORT` | Host port pre API |
-| `TRAFFIC_BACKEND_PORT` | Host port pre traffic-jams-backend |
-| `ADMIN_BACKEND_PORT` | Host port pre admin-backend |
-| `UI_PORT` | Host port pre UI |
-| `CENTRAL_DB_HOST` | Hostname centrálnej DB (`db_central` ak na rovnakej sieti) |
-| `CENTRAL_DB_PORT` | Port centrálnej DB (default `5432`) |
-| `POSTGRES_DB_CENTRAL` | Názov centrálnej DB (musí súhlasiť s `db/.env`) |
-| `POSTGRES_USER_CENTRAL` | Používateľ centrálnej DB |
-| `POSTGRES_PASSWORD_CENTRAL` | Heslo centrálnej DB |
+---
 
 ## Submodule branch tracking
 
-Submoduly sledujú konkrétnu vetvu (`db` → `deploy`).  
-Parent repo ukladá SHA commitu — verzia je vždy reprodukovateľná.  
-`sync` posunie SHA na aktuálny tip sledovanej vetvy a commitne zmenu.
+Submoduly sledujú konkrétnu vetvu. `sync` posunie SHA pointer na aktuálny tip vetvy.
 
 ```bash
-# Posunúť submoduly na latest
-./analyticity.sh sync
-
-# Pushnúť aby ostatné nasadenia videli nový pointer
-git push
+./analyticity.sh sync   # posunie db/ a sources/backend/ na latest
+git push                # ostatné servery uvidia nový pointer
 ```
