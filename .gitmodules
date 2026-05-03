@@ -9,7 +9,7 @@
 [submodule "sources/ui"]
 	path = sources/ui
 	url = git@github.com:analyticity/bp_ux_ui.git
-	branch = master
+	branch = deploy
 [submodule "sources/data_model/infrastructure"]
 	path = sources/data_model/infrastructure
 	url = git@github.com:DP-Traffic/infrastructure.git

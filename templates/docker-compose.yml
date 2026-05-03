@@ -1,25 +1,18 @@
 name: analyticity-__CITY__
 
+include:
+  - path: ../../infrastructure/docker-compose.yml
+    project_directory: ../../sources/data_model/infrastructure/compose/dev
+
 x-common-env: &common-env
   env_file: .env
 
 services:
 
-  # ── City-local database ──────────────────────────────────────────────────────
-
-  local_db:
-    image: postgres:16
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB_BRNO}
-      POSTGRES_USER: ${POSTGRES_USER_BRNO}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD_BRNO}
-    volumes:
-      - local_db_data:/var/lib/postgresql/data
-    networks:
-      - analyticity-network
-
   # ── Application services ─────────────────────────────────────────────────────
+  # No depends_on — app services start immediately and connect to DB/Kafka when
+  # available. API falls back to example data until DB is ready, then switches
+  # automatically without restart.
 
   api:
     image: ${REGISTRY:-ghcr.io/analyticity}/api:${IMAGE_TAG:-latest}
@@ -27,9 +20,8 @@ services:
     <<: *common-env
     ports:
       - "${API_PORT:-8000}:8000"
-    depends_on:
-      - local_db
     networks:
+      - default
       - analyticity-network
 
   traffic-jams-backend:
@@ -38,9 +30,8 @@ services:
     <<: *common-env
     ports:
       - "${TRAFFIC_BACKEND_PORT:-8081}:8081"
-    depends_on:
-      - local_db
     networks:
+      - default
       - analyticity-network
 
   admin-backend:
@@ -50,6 +41,7 @@ services:
     ports:
       - "${ADMIN_BACKEND_PORT:-8082}:8082"
     networks:
+      - default
       - analyticity-network
 
   bp-ux-ui:
@@ -57,6 +49,9 @@ services:
     restart: unless-stopped
     environment:
       VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://127.0.0.1:8000/api/v1}
+      VITE_APP_CENTER_LON: ${VITE_APP_CENTER_LON}
+      VITE_APP_CENTER_LAT: ${VITE_APP_CENTER_LAT}
+      VITE_APP_CITY: ${VITE_APP_CITY}
     ports:
       - "${UI_PORT:-80}:80"
     networks:
@@ -65,6 +60,3 @@ services:
 networks:
   analyticity-network:
     external: true
-
-volumes:
-  local_db_data:

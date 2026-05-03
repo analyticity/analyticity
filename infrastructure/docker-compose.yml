@@ -1,0 +1,403 @@
+# ==========================================================
+# Analyticity — customized infra stack
+#
+# Toto je upravená kópia sources/data_model/infrastructure/compose/dev/docker-compose.yml:
+#   - odstránené container_name (Docker generuje unikátne mená per-projekt)
+#   - porty sú env-var driven → každé mesto môže mať iné porty
+#
+# Relatívne cesty (Dockerfile.db, otel config, prometheus) sa resolvujú
+# voči project_directory v include: → sources/data_model/infrastructure/compose/dev
+#
+# Profily:
+#   (default)   → postgres-timescale + redpanda
+#   tools       → + pgadmin, redpanda-console
+#   extract     → + waze-feed, ndic-closures, police-accidents
+#   transform   → + db-migrate, transformery, event-linker
+#   apps        → extract + transform
+#   mon         → + otel, jaeger, prometheus, grafana
+#   all         → všetko
+# ==========================================================
+
+x-app-env: &app-env
+  KAFKA_BROKERS: ${KAFKA_BROKERS}
+  OTEL_EXPORTER: ${OTEL_EXPORTER}
+  QUARKUS_OTEL_SDK_DISABLED: ${OTEL_DISABLED:-true}
+  QUARKUS_DATASOURCE_DB_KIND: postgresql
+  QUARKUS_DATASOURCE_JDBC_URL: jdbc:postgresql://postgres-timescale:5432/${POSTGRES_DB}
+  QUARKUS_DATASOURCE_USERNAME: ${POSTGRES_USER}
+  QUARKUS_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
+  TOPIC_JAMS: ${TOPIC_JAMS}
+  TOPIC_ALERTS: ${TOPIC_ALERTS}
+  TOPIC_IRREGULARS: ${TOPIC_IRREGULARS}
+  TOPIC_CLOSURES: ${TOPIC_CLOSURES}
+  TOPIC_ACCIDENTS: ${TOPIC_ACCIDENTS}
+
+x-healthcheck-defaults: &hc-defaults
+  interval: 10s
+  timeout: 3s
+  retries: 10
+  start_period: 15s
+
+services:
+  # -------- core infra (vždy běží) --------
+  postgres-timescale:
+    build:
+      context: .
+      dockerfile: Dockerfile.db
+      network: host
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=timescaledb
+      - -c
+      - shared_buffers=128MB
+      - -c
+      - work_mem=4MB
+      - -c
+      - effective_cache_size=256MB
+      - -c
+      - max_connections=50
+    ports:
+      - "${POSTGRES_TIMESCALE_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-admin} -d ${POSTGRES_DB:-traffic}"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 30s
+
+  redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:v25.2.5
+    command:
+      - redpanda
+      - start
+      - --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr internal://redpanda:9092,external://localhost:19092
+      - --pandaproxy-addr internal://0.0.0.0:8082,external://0.0.0.0:18082
+      - --advertise-pandaproxy-addr internal://redpanda:8082,external://localhost:18082
+      - --schema-registry-addr internal://0.0.0.0:8081,external://0.0.0.0:18081
+      - --rpc-addr redpanda:33145
+      - --advertise-rpc-addr redpanda:33145
+      - --mode dev-container
+      - --smp 1
+      - --memory=512M
+      - --reserve-memory=0M
+      - --default-log-level=info
+      - --set
+      - redpanda.log_compression_type=gzip
+    ports:
+      - "${REDPANDA_SCHEMA_EXT_PORT:-18081}:18081"
+      - "${REDPANDA_PROXY_EXT_PORT:-18082}:18082"
+      - "${REDPANDA_KAFKA_EXT_PORT:-19092}:19092"
+      - "${REDPANDA_METRICS_EXT_PORT:-19644}:9644"
+    healthcheck:
+      test: ["CMD", "bash", "-lc", "rpk cluster info --brokers=redpanda:9092 >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 3s
+      retries: 30
+
+  # -------- dev tools (profile: tools | all) --------
+
+  pgadmin:
+    image: dpage/pgadmin4:9.13.0
+    profiles: [tools, all]
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        echo "$$SERVERS_JSON" > /tmp/servers.json &&
+        exec /entrypoint.sh
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@admin.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+      PGADMIN_LISTEN_PORT: 5050
+      PGADMIN_SERVER_JSON_FILE: /tmp/servers.json
+      SERVERS_JSON: |
+        {
+          "Servers": {
+            "1": {
+              "Name": "TimescaleDB (dev)",
+              "Group": "Servers",
+              "Host": "postgres-timescale",
+              "Port": 5432,
+              "MaintenanceDB": "${POSTGRES_DB}",
+              "Username": "${POSTGRES_USER}",
+              "SSLMode": "prefer"
+            }
+          }
+        }
+    ports:
+      - "${PGADMIN_INFRA_PORT:-5050}:5050"
+    depends_on:
+      postgres-timescale:
+        condition: service_healthy
+
+  console:
+    image: docker.redpanda.com/redpandadata/console:v3.2.2
+    profiles: [tools, all]
+    entrypoint: /bin/sh
+    command: -c 'echo "$$CONSOLE_CONFIG_FILE" > /tmp/config.yml; /app/console'
+    environment:
+      CONFIG_FILEPATH: /tmp/config.yml
+      CONSOLE_CONFIG_FILE: |
+        kafka:
+          brokers: ["redpanda:9092"]
+        schemaRegistry:
+          enabled: true
+          urls: ["http://redpanda:8081"]
+        redpanda:
+          adminApi:
+            enabled: true
+            urls: ["http://redpanda:9644"]
+    ports:
+      - "${CONSOLE_EXT_PORT:-8080}:8080"
+    depends_on:
+      redpanda:
+        condition: service_healthy
+
+  # -------- extract (profile: extract | apps | all) --------
+
+  db-migrate:
+    image: ghcr.io/dp-traffic/db_migrate:latest
+    platform: linux/amd64
+    profiles: [transform, apps, all]
+    environment:
+      DB_HOST: postgres-timescale
+      DB_PORT: "5432"
+      DB_NAME: ${POSTGRES_DB}
+      DB_USER: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      RUN_SEEDS: ${RUN_SEEDS:-true}
+      RUN_OSM_IMPORT: ${RUN_OSM_IMPORT:-true}
+      OSM_BBOX: ${OSM_BBOX:-}
+      FLYWAY_CONNECT_RETRIES: 30
+    depends_on:
+      postgres-timescale:
+        condition: service_healthy
+    restart: "no"
+
+  waze-feed:
+    image: ghcr.io/dp-traffic/waze:latest
+    platform: linux/amd64
+    profiles: [extract, apps, all]
+    environment:
+      <<: *app-env
+      WAZE_URL: ${WAZE_URL}
+      FETCH_SECONDS: ${WAZE_FETCH_SECONDS}
+      PORT: "8080"
+    healthcheck:
+      <<: *hc-defaults
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/q/health/ready || exit 1"]
+    depends_on:
+      redpanda:
+        condition: service_healthy
+
+  ndic-closures:
+    image: ghcr.io/dp-traffic/ndic_closures:latest
+    platform: linux/amd64
+    mem_limit: 128m
+    profiles: [extract, apps, all]
+    environment:
+      <<: *app-env
+      NDIC_USER: ${NDIC_USER}
+      NDIC_PASS: ${NDIC_PASS}
+      PORT: "8080"
+    ports:
+      - "${NDIC_EXT_PORT:-8888}:8080"
+    depends_on:
+      redpanda:
+        condition: service_healthy
+
+  police-accidents:
+    image: ghcr.io/dp-traffic/police_accidents_extractor:latest
+    platform: linux/amd64
+    profiles: [extract, apps, all]
+    environment:
+      <<: *app-env
+      POLICE_BASE_URL: ${POLICE_BASE_URL}
+      POLICE_REGION: ${POLICE_REGION}
+      POLICE_START_YEAR: ${POLICE_START_YEAR}
+      POLICE_FETCH_INTERVAL: ${POLICE_FETCH_INTERVAL}
+      PORT: "9999"
+    ports:
+      - "${POLICE_EXT_PORT:-9999}:9999"
+    healthcheck:
+      <<: *hc-defaults
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9999/q/health/ready || exit 1"]
+    depends_on:
+      postgres-timescale:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+
+  # -------- transform (profile: transform | apps | all) --------
+
+  accidents-transformer:
+    image: ghcr.io/dp-traffic/accidents-transformer:latest
+    platform: linux/amd64
+    mem_limit: 128m
+    profiles: [transform, apps, all]
+    environment:
+      <<: *app-env
+      TOPIC_POLICE_ACCIDENTS: ${TOPIC_ACCIDENTS}
+      TOPIC_WAZE_ALERTS: ${TOPIC_ALERTS}
+      BBOX_MIN_LON: ${BBOX_MIN_LON:-}
+      BBOX_MIN_LAT: ${BBOX_MIN_LAT:-}
+      BBOX_MAX_LON: ${BBOX_MAX_LON:-}
+      BBOX_MAX_LAT: ${BBOX_MAX_LAT:-}
+      PORT: "9999"
+    ports:
+      - "${ACCIDENTS_TRANSFORMER_EXT_PORT:-9998}:9999"
+    healthcheck:
+      <<: *hc-defaults
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9999/q/health/ready || exit 1"]
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      db-migrate:
+        condition: service_completed_successfully
+
+  jams-transformer:
+    image: ghcr.io/dp-traffic/jams_transformers:latest
+    platform: linux/amd64
+    profiles: [transform, apps, all]
+    environment:
+      <<: *app-env
+      TOPIC_WAZE_JAMS: ${TOPIC_JAMS}
+      TOPIC_WAZE_ALERTS: ${TOPIC_ALERTS}
+      BBOX_MIN_LON: ${BBOX_MIN_LON:-}
+      BBOX_MIN_LAT: ${BBOX_MIN_LAT:-}
+      BBOX_MAX_LON: ${BBOX_MAX_LON:-}
+      BBOX_MAX_LAT: ${BBOX_MAX_LAT:-}
+      PORT: "9999"
+    ports:
+      - "${JAMS_TRANSFORMER_EXT_PORT:-9997}:9999"
+    healthcheck:
+      <<: *hc-defaults
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9999/q/health/ready || exit 1"]
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      db-migrate:
+        condition: service_completed_successfully
+
+  alerts-transformer:
+    image: ghcr.io/dp-traffic/alerts_transformator:latest
+    platform: linux/amd64
+    profiles: [transform, apps, all]
+    environment:
+      <<: *app-env
+      TOPIC_WAZE_ALERTS: ${TOPIC_ALERTS}
+      BBOX_MIN_LON: ${BBOX_MIN_LON:-}
+      BBOX_MIN_LAT: ${BBOX_MIN_LAT:-}
+      BBOX_MAX_LON: ${BBOX_MAX_LON:-}
+      BBOX_MAX_LAT: ${BBOX_MAX_LAT:-}
+      PORT: "9999"
+    ports:
+      - "${ALERTS_TRANSFORMER_EXT_PORT:-9996}:9999"
+    healthcheck:
+      <<: *hc-defaults
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9999/q/health/ready || exit 1"]
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      db-migrate:
+        condition: service_completed_successfully
+
+  closures-transformer:
+    image: ghcr.io/dp-traffic/closures-transformer:latest
+    platform: linux/amd64
+    profiles: [transform, apps, all]
+    environment:
+      <<: *app-env
+      TOPIC_NDIC_CLOSURES: ${TOPIC_CLOSURES}
+      TOPIC_WAZE_ALERTS: ${TOPIC_ALERTS}
+      BBOX_MIN_LON: ${BBOX_MIN_LON:-}
+      BBOX_MIN_LAT: ${BBOX_MIN_LAT:-}
+      BBOX_MAX_LON: ${BBOX_MAX_LON:-}
+      BBOX_MAX_LAT: ${BBOX_MAX_LAT:-}
+      PORT: "9999"
+    ports:
+      - "${CLOSURES_TRANSFORMER_EXT_PORT:-9995}:9999"
+    healthcheck:
+      <<: *hc-defaults
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9999/q/health/ready || exit 1"]
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      db-migrate:
+        condition: service_completed_successfully
+
+  event-linker:
+    image: ghcr.io/dp-traffic/event_linker:latest
+    platform: linux/amd64
+    mem_limit: 128m
+    profiles: [transform, apps, all]
+    environment:
+      QUARKUS_DATASOURCE_DB_KIND: postgresql
+      QUARKUS_DATASOURCE_JDBC_URL: jdbc:postgresql://postgres-timescale:5432/${POSTGRES_DB}
+      QUARKUS_DATASOURCE_USERNAME: ${POSTGRES_USER}
+      QUARKUS_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
+      QUARKUS_OTEL_SDK_DISABLED: ${OTEL_DISABLED:-true}
+      OTEL_EXPORTER: ${OTEL_EXPORTER}
+      LINKER_INTERVAL: ${LINKER_INTERVAL:-2m}
+      LINKER_INITIAL_DELAY: ${LINKER_INITIAL_DELAY:-30s}
+      PORT: "9999"
+    ports:
+      - "${EVENT_LINKER_EXT_PORT:-9994}:9999"
+    healthcheck:
+      <<: *hc-defaults
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9999/q/health/ready || exit 1"]
+    depends_on:
+      postgres-timescale:
+        condition: service_healthy
+      db-migrate:
+        condition: service_completed_successfully
+
+  # -------- monitoring (profile: mon | all) --------
+
+  otel-collector:
+    image: otel/opentelemetry-collector:0.115.0
+    mem_limit: 128m
+    profiles: [mon, all]
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./otel-collector-config.yml:/etc/otel-collector-config.yaml:ro
+    ports:
+      - "${OTEL_GRPC_PORT:-4317}:4317"
+      - "${OTEL_HTTP_PORT:-4318}:4318"
+    depends_on: [jaeger, prometheus]
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.58
+    profiles: [mon, all]
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "${JAEGER_UI_PORT:-16686}:16686"
+      - "${JAEGER_GRPC_PORT:-14250}:14250"
+      - "${JAEGER_HTTP_PORT:-14268}:14268"
+
+  prometheus:
+    image: prom/prometheus:v3.2.1
+    profiles: [mon, all]
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+
+  grafana:
+    image: grafana/grafana:11.5.2
+    profiles: [mon, all]
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    depends_on: [prometheus]
+
+volumes:
+  pgdata:
