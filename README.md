@@ -395,3 +395,24 @@ docker compose --project-name analyticity-brno --profile all down -v
 | `sources/data_model/accidents-transformer/` | `DP-Traffic/accidents-transformer` | `main` |
 | `sources/data_model/db_migrate/` | `DP-Traffic/db_migrate` | `main` |
 | `sources/data_model/event_linker/` | `DP-Traffic/event_linker` | `main` |
+
+## License
+
+Copyright (C) 2026 Magdaléna Ondrušková
+
+This program is free software: you can redistribute it and/or
+modify it under the terms of the
+[GNU Affero General Public License](LICENSE) as published by
+the Free Software Foundation, either version 3 of the License,
+or (at your option) any later version.
+
+**What this means in practice.** You are free to use, study,
+modify and redistribute this software, including for research
+and teaching. If you modify it and make it available to others
+over a network — for example by running your own instance of
+the dashboard or API — you must offer those users the complete
+corresponding source code of your modified version, under the
+same license.
+
+If you use this software in academic work, please cite it — see
+[CITATION.cff](CITATION.cff).
