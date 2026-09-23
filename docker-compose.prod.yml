@@ -59,7 +59,10 @@ services:
     restart: unless-stopped
     environment:
       URL_BASE_PATH: /analyticity/brno
-      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/analyticity/brno/api}
+      # Matches api's own route prefix (/api/v1/..., see nginx.conf) — mirrors
+      # cities/brno's default of http://127.0.0.1:8000/api/v1 (full API root
+      # baked into VITE_API_BASE_URL itself, not appended by the frontend).
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/analyticity/brno/api/v1}
       VITE_API_BACKEND_URL: ${VITE_API_BACKEND_URL:-/analyticity/brno/admin}
       VITE_TRAFFIC_BASE_URL: ${VITE_TRAFFIC_BASE_URL:-/analyticity/brno/traffic-jams}
       VITE_APP_CENTER_LON: ${VITE_APP_CENTER_LON}
