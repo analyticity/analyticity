@@ -1,0 +1,90 @@
+# ==========================================================
+# dexter.fit.vutbr.cz deploy — Brno app services only.
+#
+# This does NOT start postgres-timescale/redpanda/extractors — those already run
+# on the server as the separate `traffic` Compose project (deployed from
+# /home/lazy_lemour/magda/infrastructure, not from this repo). This file attaches
+# api/traffic-jams-backend/admin-backend to that stack's `infrastructure-network`
+# (external, created by the `traffic` project) instead of bundling a second copy.
+#
+# Unrelated to cities/*/docker-compose.yml + analyticity.sh, which remain the
+# self-contained multi-city tool for a dedicated VM (own DB/Kafka per city).
+# See CLAUDE.md "Deploy on dexter.fit.vutbr.cz" section.
+#
+# Managed via dexter.sh from the dexter repo (projects/analyticity submodule):
+#   ./dexter.sh remote-sync analyticity
+#   ./dexter.sh remote-start analyticity
+# ==========================================================
+
+services:
+  api:
+    container_name: analyticity-api
+    image: ${REGISTRY:-ghcr.io/analyticity}/api:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    env_file:
+      - .env
+    networks:
+      - analyticityNetwork
+      - infrastructure-network
+
+  traffic-jams-backend:
+    container_name: analyticity-traffic-jams-backend
+    image: ${REGISTRY:-ghcr.io/analyticity}/traffic-jams-backend:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    env_file:
+      - .env
+    networks:
+      - analyticityNetwork
+      - infrastructure-network
+
+  admin-backend:
+    container_name: analyticity-admin-backend
+    image: ${REGISTRY:-ghcr.io/analyticity}/admin-backend:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    env_file:
+      - .env
+    networks:
+      - analyticityNetwork
+      - infrastructure-network
+
+  # NOTE: bp-ux-ui is built without URL-prefix support (no Vite `base` / entrypoint
+  # sed script yet in sources/ui — see CLAUDE.md). Until that lands, assets and
+  # absolute API calls from this container under /analyticity/brno will likely be
+  # broken. Kept here anyway per explicit request; not a deploy bug on this side.
+  bp-ux-ui:
+    container_name: analyticity-bp-ux-ui
+    image: ${REGISTRY:-ghcr.io/analyticity}/bp-ux-ui:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/analyticity/brno/api}
+      VITE_API_BACKEND_URL: ${VITE_API_BACKEND_URL:-/analyticity/brno/admin}
+      VITE_APP_CENTER_LON: ${VITE_APP_CENTER_LON}
+      VITE_APP_CENTER_LAT: ${VITE_APP_CENTER_LAT}
+      VITE_APP_CITY: ${VITE_APP_CITY:-Brno}
+    networks:
+      - analyticityNetwork
+
+  proxy:
+    container_name: analyticity-proxy
+    image: nginx:1.19
+    restart: unless-stopped
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - api
+      - traffic-jams-backend
+      - admin-backend
+      - bp-ux-ui
+    networks:
+      - analyticityNetwork
+      - network
+
+networks:
+  network:
+    name: kristyna-dev
+    external: true
+  analyticityNetwork:
+    name: analyticityNetwork
+  infrastructure-network:
+    name: infrastructure-network
+    external: true
