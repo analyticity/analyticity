@@ -47,15 +47,16 @@ services:
       - analyticityNetwork
       - infrastructure-network
 
-  # NOTE: bp-ux-ui is built without URL-prefix support (no Vite `base` / entrypoint
-  # sed script yet in sources/ui — see CLAUDE.md). Until that lands, assets and
-  # absolute API calls from this container under /analyticity/brno will likely be
-  # broken. Kept here anyway per explicit request; not a deploy bug on this side.
+  # NOTE: URL_BASE_PATH requires the sources/ui runtime-base-path fix (branch
+  # feature/runtime-url-base-path, not yet merged/pushed/rebuilt as of writing).
+  # Until an image built from that branch is published, bp-ux-ui here still
+  # serves root-absolute asset paths and this env var has no effect.
   bp-ux-ui:
     container_name: analyticity-bp-ux-ui
     image: ${REGISTRY:-ghcr.io/analyticity}/bp-ux-ui:${IMAGE_TAG:-latest}
     restart: unless-stopped
     environment:
+      URL_BASE_PATH: /analyticity/brno
       VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/analyticity/brno/api}
       VITE_API_BACKEND_URL: ${VITE_API_BACKEND_URL:-/analyticity/brno/admin}
       VITE_APP_CENTER_LON: ${VITE_APP_CENTER_LON}

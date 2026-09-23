@@ -196,6 +196,9 @@ URL: `/analyticity/brno` (viac miest v budúcnosti = ďalšia sada services v to
 1. **Centrálna DB nie je na serveri nasadená.** `DB_CENTRAL_*` v `.env.example` sú placeholder —
    ak `api`/`admin-backend` centrálnu DB pri štarte vyžadujú, treba najprv nasadiť
    `db/centralDbCreation/docker-compose.yml` na server.
-2. **UI base path.** `sources/ui` (bp_ux_ui) zatiaľ nemá Vite `base` + entrypoint `sed` skript pre
-   URL-prefix (pozri sekciu vyššie) — kým to nepribudne, assety/API volania z `bp-ux-ui` pod
-   `/analyticity/brno` môžu byť rozbité. Toto je zmena v `sources/ui`, nie v tomto repe.
+2. **UI base path — opravené, ale nie live.** Fix (Vite sentinel `base` + entrypoint `sed` +
+   `BrowserRouter basename`) existuje na branchi `feature/runtime-url-base-path` v `sources/ui`
+   (lokálna, needcommitnutá/nepushnutá do jej repa — čaká sa na review a PR). Kým sa nezmerguje,
+   nezbuildí a nepushne nový `ghcr.io/analyticity/bp-ux-ui:latest` image, `docker-compose.prod.yml`
+   síce už posiela `URL_BASE_PATH=/analyticity/brno`, ale bežiaci image ho ignoruje (stará verzia
+   bez tejto podpory) — stránka pod `/analyticity/brno` zostáva prázdna, kým sa image needobuildí.
