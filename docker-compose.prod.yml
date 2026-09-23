@@ -17,6 +17,31 @@
 # ==========================================================
 
 services:
+  # Shared central DB (per-city app DBs stay separate — this is the one from
+  # db/centralDbCreation, used by admin-backend). Bundled into this project
+  # per explicit request; note this ties its data lifecycle to this project's
+  # (e.g. `remote-clean analyticity` would remove this volume too).
+  # pgadmin from db/centralDbCreation is intentionally omitted — not needed
+  # for admin-backend to function, add it back if you want a DB admin UI.
+  db-central:
+    container_name: analyticity-db-central
+    image: postgis/postgis:14-3.3
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB_CENTRAL}
+      POSTGRES_USER: ${POSTGRES_USER_CENTRAL}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD_CENTRAL}
+    volumes:
+      - ./init_db_central.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - db_central_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER_CENTRAL} -d ${POSTGRES_DB_CENTRAL}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks:
+      - analyticityNetwork
+
   api:
     container_name: analyticity-api
     image: ${REGISTRY:-ghcr.io/analyticity}/api:${IMAGE_TAG:-latest}
@@ -43,6 +68,9 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    depends_on:
+      db-central:
+        condition: service_healthy
     networks:
       - analyticityNetwork
       - infrastructure-network
@@ -95,3 +123,6 @@ networks:
   infrastructure-network:
     name: infrastructure-network
     external: true
+
+volumes:
+  db_central_data:
