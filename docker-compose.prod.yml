@@ -47,18 +47,21 @@ services:
       - analyticityNetwork
       - infrastructure-network
 
-  # NOTE: URL_BASE_PATH requires the sources/ui runtime-base-path fix (branch
-  # feature/runtime-url-base-path, not yet merged/pushed/rebuilt as of writing).
-  # Until an image built from that branch is published, bp-ux-ui here still
-  # serves root-absolute asset paths and this env var has no effect.
+  # Built from sources/ui branch feature/runtime-url-base-path (not merged into
+  # analyticity/bp_ux_ui's deploy branch, not published to ghcr.io/analyticity —
+  # that tag is shared with the live cities/brno production deploy, so pushing
+  # unreviewed code there would affect it). Pushed instead to dexter's own
+  # private registry (dexter.fit.vutbr.cz, basic-auth protected) under this
+  # project's own tag, used only by this dexter deployment.
   bp-ux-ui:
     container_name: analyticity-bp-ux-ui
-    image: ${REGISTRY:-ghcr.io/analyticity}/bp-ux-ui:${IMAGE_TAG:-latest}
+    image: ${BP_UX_UI_IMAGE:-ghcr.io/analyticity/bp-ux-ui:latest}
     restart: unless-stopped
     environment:
       URL_BASE_PATH: /analyticity/brno
       VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/analyticity/brno/api}
       VITE_API_BACKEND_URL: ${VITE_API_BACKEND_URL:-/analyticity/brno/admin}
+      VITE_TRAFFIC_BASE_URL: ${VITE_TRAFFIC_BASE_URL:-/analyticity/brno/traffic-jams}
       VITE_APP_CENTER_LON: ${VITE_APP_CENTER_LON}
       VITE_APP_CENTER_LAT: ${VITE_APP_CENTER_LAT}
       VITE_APP_CITY: ${VITE_APP_CITY:-Brno}
