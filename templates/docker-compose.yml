@@ -2,7 +2,7 @@ name: analyticity-__CITY__
 
 include:
   - path: ../../infrastructure/docker-compose.yml
-    project_directory: ../../sources/data_model/infrastructure/compose/dev
+    project_directory: ../../sources/data-pipeline/infrastructure/compose/dev
 
 x-common-env: &common-env
   env_file: .env

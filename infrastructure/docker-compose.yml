@@ -1,12 +1,12 @@
 # ==========================================================
 # Analyticity — customized infra stack
 #
-# Toto je upravená kópia sources/data_model/infrastructure/compose/dev/docker-compose.yml:
+# Toto je upravená kópia sources/data-pipeline/infrastructure/compose/dev/docker-compose.yml:
 #   - odstránené container_name (Docker generuje unikátne mená per-projekt)
 #   - porty sú env-var driven → každé mesto môže mať iné porty
 #
 # Relatívne cesty (Dockerfile.db, otel config, prometheus) sa resolvujú
-# voči project_directory v include: → sources/data_model/infrastructure/compose/dev
+# voči project_directory v include: → sources/data-pipeline/infrastructure/compose/dev
 #
 # Profily:
 #   (default)   → postgres-timescale + redpanda
