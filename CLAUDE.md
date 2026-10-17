@@ -36,7 +36,7 @@ analyticity/
 │       └── .env                     # GITIGNORED v submodule
 └── sources/                         # submoduly — NIKDY tu nerob zmeny priamo
     ├── backend/                     # analyticity/api (branch: deploy)
-    ├── ui/                          # analyticity/bp_ux_ui (branch: deploy)
+    ├── ui/                          # analyticity/web (branch: deploy)
     └── data_model/
         └── infrastructure/          # DP-Traffic/infrastructure (branch: main)
                                      # Originálny infra compose — nerob tu zmeny,
@@ -132,7 +132,7 @@ VITE_* premenné sa **bakia pri docker build** — runtime env var funguje len a
 |----------|------|-------|
 | `db/` | analyticity/central_analyticity_db | **deploy** |
 | `sources/backend/` | analyticity/api | **deploy** |
-| `sources/ui/` | analyticity/bp_ux_ui | **deploy** |
+| `sources/ui/` | analyticity/web | **deploy** |
 | `sources/data_model/infrastructure/` | DP-Traffic/infrastructure | main |
 | `sources/data_model/*` (ostatné) | DP-Traffic/* | main |
 

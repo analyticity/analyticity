@@ -384,7 +384,7 @@ docker compose --project-name analyticity-brno --profile all down -v
 |-------|-----------|-------|
 | `db/` | `analyticity/central_analyticity_db` | `deploy` |
 | `sources/backend/` | `analyticity/api` | `deploy` |
-| `sources/ui/` | `analyticity/bp_ux_ui` | `deploy` |
+| `sources/ui/` | `analyticity/web` | `deploy` |
 | `sources/data_model/infrastructure/` | `DP-Traffic/infrastructure` | `main` |
 | `sources/data_model/waze/` | `DP-Traffic/waze` | `main` |
 | `sources/data_model/ndic_closures/` | `DP-Traffic/ndic_closures` | `main` |
