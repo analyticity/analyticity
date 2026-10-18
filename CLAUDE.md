@@ -17,7 +17,10 @@ analyticity/
 ├── infrastructure/
 │   └── docker-compose.yml           # Analyticity-customizovaná verzia infra stacku
 │                                    # (bez container_name, porty cez env vars)
-│                                    # Sem treba robiť zmeny, NIE do sources/data_model/infrastructure
+│                                    # Sem treba robiť zmeny, NIE do sources/data-pipeline/infrastructure
+├── local/
+│   └── docker-compose.yml           # lokálny vývojový stack (local:up) — build zo zdrojákov,
+│                                    # bez Kafky/TimescaleDB, api nad vzorovými dátami
 ├── cities/
 │   ├── brno/
 │   │   ├── docker-compose.yml       # include: infrastructure/ + app services
@@ -37,9 +40,8 @@ analyticity/
 └── sources/                         # submoduly — NIKDY tu nerob zmeny priamo
     ├── backend/                     # analyticity/api (branch: deploy)
     ├── ui/                          # analyticity/web (branch: deploy)
-    └── data_model/
-        └── infrastructure/          # DP-Traffic/infrastructure (branch: main)
-                                     # Originálny infra compose — nerob tu zmeny,
+    └── data-pipeline/               # analyticity/data-pipeline (branch: deploy)
+        └── infrastructure/          # Originálny infra compose — nerob tu zmeny,
                                      # zmeny patria do infrastructure/docker-compose.yml
 ```
 
@@ -89,7 +91,13 @@ ORP Most má všetky infra porty explicitne v `.env` (+100 offset).
 ./analyticity.sh setup <city>              # nové mesto zo šablóny
 ./analyticity.sh sync                      # submoduly na latest
 ./analyticity.sh db:start / db:stop / db:logs / db:status
+./analyticity.sh local:up [--workspace]     # lokálny stack (8090 web, 8091 api, 8092 traffic, 8093 admin, 5439 DB)
+./analyticity.sh local:down / local:reset / local:logs / local:status
+./analyticity.sh release <repo>            # main → deploy na GitHube (gh api merges) → CI zbuilduje images
 ```
+
+`local:up --workspace` builduje zo susedných klonov `../api`, `../web`, `../central_analyticity_db`
+(premenné `BACKEND_SRC`, `UI_SRC`, `CENTRAL_DB_SRC` v `local/docker-compose.yml`), bez prepínača zo submodulov.
 
 Profily: `all` (default), `tools`, `extract`, `transform`, `apps`, `mon`
 
@@ -104,7 +112,7 @@ Každý city compose má:
 ```yaml
 include:
   - path: ../../infrastructure/docker-compose.yml       # main repo — upravená verzia
-    project_directory: ../../sources/data_model/infrastructure/compose/dev  # kde sú Dockerfile.db, otel config atď.
+    project_directory: ../../sources/data-pipeline/infrastructure/compose/dev  # kde sú Dockerfile.db, otel config atď.
 ```
 
 `project_directory` musí mieriť na submodul aby relatívne cesty pre build a volume mount fungovali.
@@ -122,7 +130,7 @@ Kľúčové premenné:
 - `POSTGRES_HOST_BRNO` — hostname DB pre API backend (vždy `postgres-timescale`, aj pre non-Brno mestá — historický artefakt v zdrojáku)
 - `POSTGRES_TIMESCALE_PORT` — host port pre postgres (default 5432)
 
-VITE_* premenné sa **bakia pri docker build** — runtime env var funguje len ak má UI entrypoint skript ktorý robí `sed` replacement. Táto feature ešte nie je v bp_ux_ui (treba pridať do `sources/ui/Dockerfile` + `docker-entrypoint.sh`).
+VITE_* premenné UI sa čítajú za behu: `docker-entrypoint.sh` v `sources/ui` pri štarte kontajnera zapíše `config.js` (`window.__APP_CONFIG__`), takže jeden image slúži všetkým mestám.
 
 ---
 
@@ -133,16 +141,16 @@ VITE_* premenné sa **bakia pri docker build** — runtime env var funguje len a
 | `db/` | analyticity/central_analyticity_db | **deploy** |
 | `sources/backend/` | analyticity/api | **deploy** |
 | `sources/ui/` | analyticity/web | **deploy** |
-| `sources/data_model/infrastructure/` | DP-Traffic/infrastructure | main |
-| `sources/data_model/*` (ostatné) | DP-Traffic/* | main |
+| `sources/data-pipeline/` | analyticity/data-pipeline | **deploy** |
 
-Pravidlo: analyticity repozitáre → `deploy`, DP-Traffic repozitáre → `main`.
+Pravidlo: všetky submoduly sledujú vetvu `deploy`. Images extraktorov/transformerov sú zatiaľ
+`ghcr.io/dp-traffic/*` (buildia sa v pôvodných DP-Traffic repách).
 
 ---
 
 ## Dôležité quirky
 
-1. **`container_name` v pôvodnom infra compose** — originál v `sources/data_model/infrastructure` má hardcoded `container_name: redpanda` atď. Preto používame `infrastructure/docker-compose.yml` kde sú tieto odstránené. Bez toho by dve mestá na jednom stroji kolidovali.
+1. **`container_name` v pôvodnom infra compose** — originál v `sources/data-pipeline/infrastructure` má hardcoded `container_name: redpanda` atď. Preto používame `infrastructure/docker-compose.yml` kde sú tieto odstránené. Bez toho by dve mestá na jednom stroji kolidovali.
 
 2. **`POSTGRES_HOST_BRNO`** — premenná sa takto volá aj pre iné mestá ako Brno — je to historický artefakt v zdrojáku `sources/backend/db/connection_to_db.py`.
 

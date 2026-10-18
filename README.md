@@ -94,21 +94,56 @@ analyticity/
 │       ├── docker-compose.yml
 │       └── .env                # ← GITIGNORED
 │
+├── local/                      # lokálne spustenie na vývoj (./analyticity.sh local:up)
+│   └── docker-compose.yml
+│
 └── sources/                    # submoduly — zdrojový kód (nerob tu zmeny priamo)
-    ├── backend/                # api, AdminBackend, TrafficJamsBackend
-    ├── ui/                     # bp-ux-ui (React)
-    └── data_model/
+    ├── backend/                # analyticity/api — api, AdminBackend, TrafficJamsBackend
+    ├── ui/                     # analyticity/web — bp-ux-ui (React)
+    └── data-pipeline/          # analyticity/data-pipeline
         ├── infrastructure/     # docker-compose pre TimescaleDB + Redpanda
         ├── db_migrate/         # Flyway migrácie + OSM import
-        ├── waze/
-        ├── ndic_closures/
-        ├── police_accidents_extractor/
-        ├── jams_transformers/
-        ├── alerts_transformator/
-        ├── closures-transformer/
-        ├── accidents-transformer/
+        ├── waze/  ndic_closures/  police_accidents_extractor/
+        ├── jams_transformers/  alerts_transformator/  closures-transformer/  accidents-transformer/
         └── event_linker/
 ```
+
+---
+
+## Lokálne spustenie (vývoj a testovanie)
+
+Spustí aplikáciu na vlastnom počítači bez Kafky, TimescaleDB a extraktorov: centrálna DB, `api` nad vzorovými dátami, `traffic-jams-backend` nad CSV, `admin-backend` a web. Images sa buildia zo zdrojákov, prístup do ghcr.io netreba.
+
+Potrebuješ Docker Desktop. Na Apple Silicon sa Python backendy buildia pre `linux/amd64` (ako v CI), prvý build preto trvá niekoľko minút.
+
+```bash
+# Zo submodulov (verzie z vetiev deploy)
+git submodule update --init
+./analyticity.sh local:up
+
+# Alebo z vlastných klonov vedľa analyticity/ (../api, ../web, ../central_analyticity_db)
+# — na vyskúšanie rozpracovaných zmien
+./analyticity.sh local:up --workspace
+```
+
+| Služba | URL |
+|--------|-----|
+| Web | http://localhost:8090 |
+| API (Swagger) | http://localhost:8091/docs |
+| Traffic Jams Backend | http://localhost:8092/docs |
+| Admin Backend | http://localhost:8093/docs |
+| Centrálna DB | `localhost:5439`, `db` / `local`, databáza `central_db` |
+
+Porty sa dajú zmeniť, napr. `LOCAL_UI_PORT=9090 ./analyticity.sh local:up`. Prihlásenie do administrácie: `VutAdmin` / `Test` (zo seed dát centrálnej DB).
+
+```bash
+./analyticity.sh local:logs web     # logy jednej služby
+./analyticity.sh local:status
+./analyticity.sh local:down         # zastaví (dáta centrálnej DB ostanú)
+./analyticity.sh local:reset        # zmaže dáta — pri ďalšom up sa DB znova naplní zo seedu
+```
+
+Po zmene kódu stačí znova `local:up` (prebuilduje zmenené images).
 
 ---
 
@@ -258,6 +293,28 @@ Pred spustením vždy skontroluj: `./analyticity.sh ports <mesto>`
 
 ---
 
+## Vydanie novej verzie
+
+Každé repo má vetvu `main` (vývoj) a `deploy` (čo sa nasadzuje). Push do `deploy` zbuilduje nové images v GitHub Actions.
+
+```bash
+# 1. Ukáže commity z main, ktoré ešte nie sú v deploy, a po potvrdení ich zmerguje
+./analyticity.sh release web      # alebo: api, central_analyticity_db, data-pipeline, simulations
+
+# 2. Po dobehnutí buildu (odkaz vypíše príkaz) nasaď novú verziu
+./analyticity.sh deploy brno bp-ux-ui
+```
+
+| Repo | Služby (images) |
+|------|-----------------|
+| `api` | `api`, `admin-backend`, `traffic-jams-backend` |
+| `web` | `bp-ux-ui` |
+| `central_analyticity_db` | `central-analyticity-db` |
+
+`release` potrebuje [GitHub CLI](https://cli.github.com/) prihlásené cez `gh auth login`.
+
+---
+
 ## Bežné operácie
 
 ```bash
@@ -314,6 +371,16 @@ docker compose --project-name analyticity-brno --profile all down -v
     db:restart                     Reštartuj centrálnu DB
     db:logs                        Logy centrálnej DB
     db:status                      Stav centrálnej DB
+
+  Lokálne (vývoj):
+    local:up [--workspace]         Zbuilduj a spusti centrálnu DB, backendy a web
+    local:down                     Zastav (dáta centrálnej DB ostanú)
+    local:reset                    Zastav a zmaž dáta centrálnej DB
+    local:logs [služba]            Logy
+    local:status                   Bežiace kontajnery
+
+  Vydania:
+    release <repo>                 main → deploy na GitHube (spustí build images)
 ```
 
 ### Profily (pre start/restart)
@@ -385,16 +452,11 @@ docker compose --project-name analyticity-brno --profile all down -v
 | `db/` | `analyticity/central_analyticity_db` | `deploy` |
 | `sources/backend/` | `analyticity/api` | `deploy` |
 | `sources/ui/` | `analyticity/web` | `deploy` |
-| `sources/data_model/infrastructure/` | `DP-Traffic/infrastructure` | `main` |
-| `sources/data_model/waze/` | `DP-Traffic/waze` | `main` |
-| `sources/data_model/ndic_closures/` | `DP-Traffic/ndic_closures` | `main` |
-| `sources/data_model/police_accidents_extractor/` | `DP-Traffic/police_accidents_extractor` | `main` |
-| `sources/data_model/jams_transformers/` | `DP-Traffic/jams_transformers` | `main` |
-| `sources/data_model/alerts_transformator/` | `DP-Traffic/alerts_transformator` | `main` |
-| `sources/data_model/closures-transformer/` | `DP-Traffic/closures-transformer` | `main` |
-| `sources/data_model/accidents-transformer/` | `DP-Traffic/accidents-transformer` | `main` |
-| `sources/data_model/db_migrate/` | `DP-Traffic/db_migrate` | `main` |
-| `sources/data_model/event_linker/` | `DP-Traffic/event_linker` | `main` |
+| `sources/data-pipeline/` | `analyticity/data-pipeline` | `deploy` |
+
+Images extraktorov a transformerov (`ghcr.io/dp-traffic/*`) sa zatiaľ stále buildia v pôvodných repozitároch DP-Traffic — CI workflowy v `data-pipeline` sú v podadresároch, kde ich GitHub nespúšťa.
+
+Na serveri po prechode z DP-Traffic submodulov: `git pull && git submodule sync && git submodule update --init`.
 
 ## License
 

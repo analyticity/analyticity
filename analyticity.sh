@@ -7,7 +7,12 @@ CITIES_DIR="$ROOT/cities"
 DB_COMPOSE="$ROOT/db/centralDbCreation/docker-compose.yml"
 DB_ENV="$ROOT/db/centralDbCreation/.env"
 DATA_COMPOSE="$ROOT/infrastructure/docker-compose.yml"
-DATA_COMPOSE_DIR="$ROOT/sources/data_model/infrastructure/compose/dev"
+DATA_COMPOSE_DIR="$ROOT/sources/data-pipeline/infrastructure/compose/dev"
+LOCAL_COMPOSE="$ROOT/local/docker-compose.yml"
+
+GITHUB_ORG="analyticity"
+# Repos with a main + deploy branch; a push to deploy builds the images
+RELEASE_REPOS="api web central_analyticity_db data-pipeline simulations"
 
 usage() {
   cat <<EOF
@@ -43,7 +48,25 @@ Usage: $(basename "$0") <command> [options]
     db:logs                      Tail central DB logs
     db:status                    Show central DB containers
 
+  Local (development — built from sources, sample data, no Kafka/TimescaleDB):
+    local:up [--workspace]       Build + start central DB, backends and web
+                                   default: from submodules (deploy versions)
+                                   --workspace: from sibling clones ../api, ../web,
+                                                ../central_analyticity_db
+    local:down                   Stop (keeps central DB data)
+    local:reset                  Stop and delete central DB data (re-seeded on next up)
+    local:logs [service]         Tail logs
+    local:status                 Show running containers
+
+  Releases (main → deploy on GitHub; the deploy push builds new images):
+    release <repo>               Show what main has over deploy, merge after confirmation
+                                   repos: $RELEASE_REPOS
+                                 then roll out: deploy <city> <service>
+
 Examples:
+  $(basename "$0") local:up --workspace    # try your local changes at http://localhost:8090
+  $(basename "$0") release web             # publish web main as a new bp-ux-ui image
+  $(basename "$0") deploy brno bp-ux-ui    # pull the new image and restart it
   $(basename "$0") db:start
   $(basename "$0") setup orp_liberec
   $(basename "$0") ports brno              # check for conflicts first
@@ -95,7 +118,7 @@ dc_db() {
 
 require_data_model() {
   if [[ ! -f "$DATA_COMPOSE_DIR/Dockerfile.db" ]]; then
-    echo "ERROR: sources/data_model/infrastructure submodule not initialised — run: git submodule update --init --recursive"
+    echo "ERROR: sources/data-pipeline submodule not initialised — run: git submodule update --init --recursive"
     exit 1
   fi
 }
@@ -329,6 +352,106 @@ cmd_topics() {
   docker exec "analyticity-${city}-redpanda-1" rpk topic list --brokers=redpanda:9092
 }
 
+# ── local development stack ──────────────────────────────────────────────────
+
+# docker compose for the local stack — project: analyticity-local
+dc_local() {
+  docker compose --project-name "analyticity-local" -f "$LOCAL_COMPOSE" "$@"
+}
+
+cmd_local_up() {
+  local src
+  if [[ "${1:-}" == "--workspace" ]]; then
+    local ws
+    ws="$(cd "$ROOT/.." && pwd)"
+    export BACKEND_SRC="$ws/api" UI_SRC="$ws/web" CENTRAL_DB_SRC="$ws/central_analyticity_db"
+    src="workspace clones in $ws"
+  elif [[ -n "${1:-}" ]]; then
+    echo "ERROR: unknown option '$1' (expected --workspace)"
+    exit 1
+  else
+    export BACKEND_SRC="$ROOT/sources/backend" UI_SRC="$ROOT/sources/ui" CENTRAL_DB_SRC="$ROOT/db"
+    src="submodules (run '$(basename "$0") sync' for the latest deploy versions)"
+  fi
+
+  local missing=0 f
+  for f in "$BACKEND_SRC/Dockerfile" "$UI_SRC/Dockerfile" "$CENTRAL_DB_SRC/centralDbCreation/init_db_central.sql"; do
+    if [[ ! -f "$f" ]]; then echo "ERROR: missing $f"; missing=1; fi
+  done
+  if [[ $missing -eq 1 ]]; then
+    echo "Submodules: git submodule update --init   |   workspace: clone api, web, central_analyticity_db next to analyticity/"
+    exit 1
+  fi
+
+  # Port check only when nothing of ours is running yet (our own containers hold the ports)
+  if [[ -z "$(dc_local ps -q 2>/dev/null)" ]]; then
+    local entry port conflicts=0
+    for entry in "${LOCAL_UI_PORT:-8090}:web" "${LOCAL_API_PORT:-8091}:api" \
+                 "${LOCAL_TRAFFIC_PORT:-8092}:traffic-jams-backend" "${LOCAL_ADMIN_PORT:-8093}:admin-backend" \
+                 "${LOCAL_CENTRAL_DB_PORT:-5439}:db-central"; do
+      port="${entry%%:*}"
+      if _port_in_use "$port"; then
+        echo "  CONFLICT  port $port (${entry#*:}) is already in use"
+        conflicts=$((conflicts + 1))
+      fi
+    done
+    if [[ $conflicts -gt 0 ]]; then
+      echo "Free the ports or override them, e.g. LOCAL_UI_PORT=9090 $(basename "$0") local:up"
+      exit 1
+    fi
+  fi
+
+  echo "==> Building from $src"
+  dc_local up -d --build
+  echo ""
+  echo "  Web:                  http://localhost:${LOCAL_UI_PORT:-8090}"
+  echo "  API (Swagger):        http://localhost:${LOCAL_API_PORT:-8091}/docs"
+  echo "  Traffic Jams Backend: http://localhost:${LOCAL_TRAFFIC_PORT:-8092}/docs"
+  echo "  Admin Backend:        http://localhost:${LOCAL_ADMIN_PORT:-8093}/docs"
+  echo "  Central DB:           localhost:${LOCAL_CENTRAL_DB_PORT:-5439}  (db / local, database central_db)"
+}
+
+cmd_local_down()   { dc_local down; }
+cmd_local_reset()  { dc_local down -v; }
+cmd_local_logs()   { dc_local logs -f "$@"; }
+cmd_local_status() { dc_local ps; }
+
+# ── releases ──────────────────────────────────────────────────────────────────
+
+cmd_release() {
+  local repo="${1:?repo required — one of: $RELEASE_REPOS}"
+  if [[ " $RELEASE_REPOS " != *" $repo "* ]]; then
+    echo "ERROR: unknown repo '$repo' — one of: $RELEASE_REPOS"
+    exit 1
+  fi
+  if ! command -v gh >/dev/null 2>&1; then
+    echo "ERROR: GitHub CLI (gh) not found — install it and run: gh auth login"
+    exit 1
+  fi
+
+  local compare="repos/$GITHUB_ORG/$repo/compare/deploy...main" ahead
+  ahead=$(gh api "$compare" --jq .ahead_by)
+  if [[ "$ahead" == "0" ]]; then
+    echo "$repo: deploy already contains everything from main — nothing to release."
+    return 0
+  fi
+
+  echo "==> $repo: main has $ahead commit(s) that are not in deploy:"
+  gh api "$compare" --jq '.commits[] | "  " + .sha[0:7] + "  " + (.commit.message | split("\n")[0])'
+  echo ""
+  read -r -p "Merge main into deploy? This builds new images. [y/N] " answer
+  if [[ ! "$answer" =~ ^[yY]$ ]]; then
+    echo "Aborted."
+    return 1
+  fi
+
+  gh api -X POST "repos/$GITHUB_ORG/$repo/merges" -f base=deploy -f head=main \
+    -f commit_message="Release: merge main into deploy" --jq '"==> deploy is now at " + .sha[0:7]'
+  echo "Image build: https://github.com/$GITHUB_ORG/$repo/actions"
+  echo "When it finishes, roll it out:  $(basename "$0") deploy <city> <service>"
+  echo "  services: api → api, admin-backend, traffic-jams-backend · web → bp-ux-ui"
+}
+
 # ── dispatch ──────────────────────────────────────────────────────────────────
 
 [[ $# -lt 1 ]] && usage
@@ -347,6 +470,12 @@ case "$COMMAND" in
   db:restart) cmd_db_restart ;;
   db:logs)    cmd_db_logs "$@" ;;
   db:status)  cmd_db_status ;;
+  local:up)     cmd_local_up "$@" ;;
+  local:down)   cmd_local_down ;;
+  local:reset)  cmd_local_reset ;;
+  local:logs)   cmd_local_logs "$@" ;;
+  local:status) cmd_local_status ;;
+  release)    cmd_release "${1:-}" ;;
   start|restart|update)
     TARGET="${1:---all}"; PROFILE="${2:-}"
     if [[ "$TARGET" == "--all" ]]; then
