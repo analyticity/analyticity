@@ -176,3 +176,37 @@ Pravidlo: všetky submoduly sledujú vetvu `deploy`. Images extraktorov/transfor
 ./analyticity.sh ports <nazov_mesta>   # skontroluj pred štartom
 ./analyticity.sh start <nazov_mesta>
 ```
+
+---
+
+## Deploy na dexter.fit.vutbr.cz — druhá, nezávislá deploy vrstva
+
+Okrem `cities/`/`analyticity.sh` (self-contained multi-city nástroj pre vlastnú VM, vlastná
+DB/Kafka na mesto) existuje aj **dexter deploy vrstva** — súbory v koreni repa
+(`docker-compose.prod.yml`, `nginx.conf`, `.env.example`/`.env`), ktoré nasadzujú **len app
+služby** (`api`, `traffic-jams-backend`, `admin-backend`, `bp-ux-ui`) na spoločný server
+dexter.fit.vutbr.cz cez [dexter](https://github.com/dexter-fit) repo (`projects/analyticity`
+submodul, `dexter.sh remote-sync`/`remote-start`).
+
+Tieto dve vrstvy sa nemiešajú:
+- `cities/*/docker-compose.yml` + `infrastructure/docker-compose.yml` = vlastný postgres-timescale
+  + redpanda + extractory, per-mesto, na vlastnej VM.
+- `docker-compose.prod.yml` (koreň repa) = **žiadna vlastná DB/Kafka** — pripája sa cez externú
+  Docker sieť `infrastructure-network` na dátový stack, ktorý na dexter.fit.vutbr.cz beží
+  **mimo tento repo** (Compose projekt `traffic`, `/home/lazy_lemour/magda/infrastructure`).
+  Momentálne obsahuje dáta pre Brno (`BBOX`/`POLICE_REGION` v jeho `.env` ukazujú na Brno).
+
+URL: `/analyticity/brno` (viac miest v budúcnosti = ďalšia sada services v tom istom
+`docker-compose.prod.yml` + ďalší `location` blok v `nginx.conf` + rozšírenie
+`PROJECT_URL_PATHS_analyticity` v dexter repe — nie nový dexter projekt).
+
+⚠️ **Otvorené položky, treba doriešiť pred prvým `remote-start`:**
+1. **Centrálna DB nie je na serveri nasadená.** `DB_CENTRAL_*` v `.env.example` sú placeholder —
+   ak `api`/`admin-backend` centrálnu DB pri štarte vyžadujú, treba najprv nasadiť
+   `db/centralDbCreation/docker-compose.yml` na server.
+2. **UI base path — opravené, ale nie live.** Fix (Vite sentinel `base` + entrypoint `sed` +
+   `BrowserRouter basename`) existuje na branchi `feature/runtime-url-base-path` v `sources/ui`
+   (lokálna, needcommitnutá/nepushnutá do jej repa — čaká sa na review a PR). Kým sa nezmerguje,
+   nezbuildí a nepushne nový `ghcr.io/analyticity/bp-ux-ui:latest` image, `docker-compose.prod.yml`
+   síce už posiela `URL_BASE_PATH=/analyticity/brno`, ale bežiaci image ho ignoruje (stará verzia
+   bez tejto podpory) — stránka pod `/analyticity/brno` zostáva prázdna, kým sa image needobuildí.

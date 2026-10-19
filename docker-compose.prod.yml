@@ -1,0 +1,128 @@
+# ==========================================================
+# dexter.fit.vutbr.cz deploy — Brno app services only.
+#
+# This does NOT start postgres-timescale/redpanda/extractors — those already run
+# on the server as the separate `traffic` Compose project (deployed from
+# /home/lazy_lemour/magda/infrastructure, not from this repo). This file attaches
+# api/traffic-jams-backend/admin-backend to that stack's `infrastructure-network`
+# (external, created by the `traffic` project) instead of bundling a second copy.
+#
+# Unrelated to cities/*/docker-compose.yml + analyticity.sh, which remain the
+# self-contained multi-city tool for a dedicated VM (own DB/Kafka per city).
+# See CLAUDE.md "Deploy on dexter.fit.vutbr.cz" section.
+#
+# Managed via dexter.sh from the dexter repo (projects/analyticity submodule):
+#   ./dexter.sh remote-sync analyticity
+#   ./dexter.sh remote-start analyticity
+# ==========================================================
+
+services:
+  # Shared central DB (per-city app DBs stay separate — this is the one from
+  # db/centralDbCreation, used by admin-backend). Bundled into this project
+  # per explicit request; note this ties its data lifecycle to this project's
+  # (e.g. `remote-clean analyticity` would remove this volume too).
+  # pgadmin from db/centralDbCreation is intentionally omitted — not needed
+  # for admin-backend to function, add it back if you want a DB admin UI.
+  db-central:
+    container_name: analyticity-db-central
+    image: postgis/postgis:14-3.3
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB_CENTRAL}
+      POSTGRES_USER: ${POSTGRES_USER_CENTRAL}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD_CENTRAL}
+    volumes:
+      - ./init_db_central.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - db_central_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER_CENTRAL} -d ${POSTGRES_DB_CENTRAL}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks:
+      - analyticityNetwork
+
+  api:
+    container_name: analyticity-api
+    image: ${REGISTRY:-ghcr.io/analyticity}/api:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    env_file:
+      - .env
+    networks:
+      - analyticityNetwork
+      - infrastructure-network
+
+  traffic-jams-backend:
+    container_name: analyticity-traffic-jams-backend
+    image: ${REGISTRY:-ghcr.io/analyticity}/traffic-jams-backend:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    env_file:
+      - .env
+    networks:
+      - analyticityNetwork
+      - infrastructure-network
+
+  admin-backend:
+    container_name: analyticity-admin-backend
+    image: ${REGISTRY:-ghcr.io/analyticity}/admin-backend:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    env_file:
+      - .env
+    depends_on:
+      db-central:
+        condition: service_healthy
+    networks:
+      - analyticityNetwork
+      - infrastructure-network
+
+  # Built from sources/ui branch feature/runtime-url-base-path (not merged into
+  # analyticity/bp_ux_ui's deploy branch, not published to ghcr.io/analyticity —
+  # that tag is shared with the live cities/brno production deploy, so pushing
+  # unreviewed code there would affect it). Pushed instead to dexter's own
+  # private registry (dexter.fit.vutbr.cz, basic-auth protected) under this
+  # project's own tag, used only by this dexter deployment.
+  bp-ux-ui:
+    container_name: analyticity-bp-ux-ui
+    image: ${BP_UX_UI_IMAGE:-ghcr.io/analyticity/bp-ux-ui:latest}
+    restart: unless-stopped
+    environment:
+      URL_BASE_PATH: /analyticity/brno
+      # Matches api's own route prefix (/api/v1/..., see nginx.conf) — mirrors
+      # cities/brno's default of http://127.0.0.1:8000/api/v1 (full API root
+      # baked into VITE_API_BASE_URL itself, not appended by the frontend).
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/analyticity/brno/api/v1}
+      VITE_API_BACKEND_URL: ${VITE_API_BACKEND_URL:-/analyticity/brno/admin}
+      VITE_TRAFFIC_BASE_URL: ${VITE_TRAFFIC_BASE_URL:-/analyticity/brno/traffic-jams}
+      VITE_APP_CENTER_LON: ${VITE_APP_CENTER_LON}
+      VITE_APP_CENTER_LAT: ${VITE_APP_CENTER_LAT}
+      VITE_APP_CITY: ${VITE_APP_CITY:-Brno}
+    networks:
+      - analyticityNetwork
+
+  proxy:
+    container_name: analyticity-proxy
+    image: nginx:1.19
+    restart: unless-stopped
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - api
+      - traffic-jams-backend
+      - admin-backend
+      - bp-ux-ui
+    networks:
+      - analyticityNetwork
+      - network
+
+networks:
+  network:
+    name: kristyna-dev
+    external: true
+  analyticityNetwork:
+    name: analyticityNetwork
+  infrastructure-network:
+    name: infrastructure-network
+    external: true
+
+volumes:
+  db_central_data:
