@@ -221,6 +221,7 @@ services:
     environment:
       <<: *app-env
       POLICE_BASE_URL: ${POLICE_BASE_URL}
+      POLICE_ARCHIVE_URL: ${POLICE_ARCHIVE_URL:-https://archiv.policie.gov.cz/clanek/statistika-nehodovosti.aspx}
       POLICE_REGION: ${POLICE_REGION}
       POLICE_START_YEAR: ${POLICE_START_YEAR}
       POLICE_FETCH_INTERVAL: ${POLICE_FETCH_INTERVAL}
