@@ -65,6 +65,9 @@ services:
     platform: linux/amd64
     build: ${BACKEND_SRC:-../sources/backend}
     # Bez POSTGRES_*_BRNO premenných api servuje vzorové dáta
+    environment:
+      # CORS: web volá api priamo z prehliadača
+      ORIGINS: http://localhost:${LOCAL_UI_PORT:-8090}
     ports:
       - "${LOCAL_API_PORT:-8091}:8000"
 
