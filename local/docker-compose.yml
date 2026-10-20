@@ -18,10 +18,7 @@
 # na Apple Silicon ich Docker Desktop spúšťa v emulácii.
 #
 # Porty sa dajú zmeniť premennými LOCAL_UI_PORT, LOCAL_API_PORT, LOCAL_TRAFFIC_PORT,
-# LOCAL_ADMIN_PORT, LOCAL_SIM_PORT a LOCAL_CENTRAL_DB_PORT pri spustení.
-#
-# Dopravná simulácia (repo simulations) beží z hotového obrazu s modelom Brna
-# (ghcr.io/analyticity/simulation-brno, ~1,7 GB, prvý štart ho stiahne). Iný obraz: SIM_IMAGE=...
+# LOCAL_ADMIN_PORT a LOCAL_CENTRAL_DB_PORT pri spustení.
 
 name: analyticity-local
 
@@ -82,23 +79,12 @@ services:
     ports:
       - "${LOCAL_TRAFFIC_PORT:-8092}:8000"
 
-  simulation:
-    platform: linux/amd64
-    image: ${SIM_IMAGE:-ghcr.io/analyticity/simulation-brno:latest}
-    environment:
-      # CORS: web volá simuláciu priamo z prehliadača
-      CORS_ALLOWED_ORIGINS: http://localhost:${LOCAL_UI_PORT:-8090}
-    ports:
-      - "${LOCAL_SIM_PORT:-8094}:8000"
-
   web:
     build: ${UI_SRC:-../sources/ui}
     environment:
       VITE_API_BASE_URL: http://localhost:${LOCAL_API_PORT:-8091}/api/v1
       VITE_API_BACKEND_URL: http://localhost:${LOCAL_ADMIN_PORT:-8093}/
       VITE_TRAFFIC_BASE_URL: http://localhost:${LOCAL_TRAFFIC_PORT:-8092}
-      # Bez tejto premennej web menu Simulace skryje
-      VITE_SIM_API_URL: http://localhost:${LOCAL_SIM_PORT:-8094}
       VITE_APP_CITY: Brno
       VITE_APP_CENTER_LAT: "49.2"
       VITE_APP_CENTER_LON: "16.6"
@@ -106,7 +92,6 @@ services:
       - api
       - admin-backend
       - traffic-jams-backend
-      - simulation
     ports:
       - "${LOCAL_UI_PORT:-8090}:80"
 

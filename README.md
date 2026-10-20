@@ -132,7 +132,6 @@ git submodule update --init
 | API (Swagger) | http://localhost:8091/docs |
 | Traffic Jams Backend | http://localhost:8092/docs |
 | Admin Backend | http://localhost:8093/docs |
-| Simulácia (API) | http://localhost:8094/docs |
 | Centrálna DB | `localhost:5439`, `db` / `local`, databáza `central_db` |
 
 Porty sa dajú zmeniť, napr. `LOCAL_UI_PORT=9090 ./analyticity.sh local:up`. Prihlásenie do administrácie: `VutAdmin` / `Test` (zo seed dát centrálnej DB).

@@ -388,7 +388,7 @@ cmd_local_up() {
     local entry port conflicts=0
     for entry in "${LOCAL_UI_PORT:-8090}:web" "${LOCAL_API_PORT:-8091}:api" \
                  "${LOCAL_TRAFFIC_PORT:-8092}:traffic-jams-backend" "${LOCAL_ADMIN_PORT:-8093}:admin-backend" \
-                 "${LOCAL_SIM_PORT:-8094}:simulation" "${LOCAL_CENTRAL_DB_PORT:-5439}:db-central"; do
+                 "${LOCAL_CENTRAL_DB_PORT:-5439}:db-central"; do
       port="${entry%%:*}"
       if _port_in_use "$port"; then
         echo "  CONFLICT  port $port (${entry#*:}) is already in use"
@@ -408,7 +408,6 @@ cmd_local_up() {
   echo "  API (Swagger):        http://localhost:${LOCAL_API_PORT:-8091}/docs"
   echo "  Traffic Jams Backend: http://localhost:${LOCAL_TRAFFIC_PORT:-8092}/docs"
   echo "  Admin Backend:        http://localhost:${LOCAL_ADMIN_PORT:-8093}/docs"
-  echo "  Simulation API:       http://localhost:${LOCAL_SIM_PORT:-8094}/docs"
   echo "  Central DB:           localhost:${LOCAL_CENTRAL_DB_PORT:-5439}  (db / local, database central_db)"
 }
 

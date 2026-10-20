@@ -91,7 +91,7 @@ ORP Most má všetky infra porty explicitne v `.env` (+100 offset).
 ./analyticity.sh setup <city>              # nové mesto zo šablóny
 ./analyticity.sh sync                      # submoduly na latest
 ./analyticity.sh db:start / db:stop / db:logs / db:status
-./analyticity.sh local:up [--workspace]     # lokálny stack (8090 web, 8091 api, 8092 traffic, 8093 admin, 8094 simulácia, 5439 DB)
+./analyticity.sh local:up [--workspace]     # lokálny stack (8090 web, 8091 api, 8092 traffic, 8093 admin, 5439 DB)
 ./analyticity.sh local:down / local:reset / local:logs / local:status
 ./analyticity.sh release <repo>            # main → deploy na GitHube (gh api merges) → CI zbuilduje images
 ```
@@ -184,8 +184,7 @@ Pravidlo: všetky submoduly sledujú vetvu `deploy`. Images extraktorov/transfor
 Okrem `cities/`/`analyticity.sh` (self-contained multi-city nástroj pre vlastnú VM, vlastná
 DB/Kafka na mesto) existuje aj **dexter deploy vrstva** — súbory v koreni repa
 (`docker-compose.prod.yml`, `nginx.conf`, `.env.example`/`.env`), ktoré nasadzujú **len app
-služby** (`api`, `traffic-jams-backend`, `admin-backend`, `bp-ux-ui`, `simulation` — dopravná
-simulácia z obrazu `ghcr.io/analyticity/simulation-brno`, za proxy na `/analyticity/brno/sim/`) na spoločný server
+služby** (`api`, `traffic-jams-backend`, `admin-backend`, `bp-ux-ui`) na spoločný server
 dexter.fit.vutbr.cz cez [dexter](https://github.com/dexter-fit) repo (`projects/analyticity`
 submodul, `dexter.sh remote-sync`/`remote-start`).
 
