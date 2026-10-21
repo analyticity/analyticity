@@ -184,7 +184,8 @@ Pravidlo: všetky submoduly sledujú vetvu `deploy`. Images extraktorov/transfor
 
 URL: **https://dexter.fit.vutbr.cz/analyticity/brno/**. Súbory v koreni repa:
 `docker-compose.prod.yml` (db-central, api, web, proxy), `docker-compose.build.yml` (build + push
-api a web do **dexter registry** `dexter.fit.vutbr.cz/analyticity/analyticity-{api,web}`),
+api a web do **dexter registry** `dexter.fit.vutbr.cz/analyticity/analyticity-{api,web}`, **iba z vetvy
+`deploy`** cez submoduly `sources/backend` a `sources/ui`; `main` sa najprv overí a vydá cez `release`),
 `nginx.conf` (projektová proxy), `.env.example`, `configure/sync-data` (`init_db_central.sql`).
 Spravuje sa cez repo [Jirka/dexter](https://github.com/Jirka/dexter) (`projects/analyticity`
 submodul, `dexter.sh build/push/remote-sync/remote-sync-data/remote-start analyticity`) —
