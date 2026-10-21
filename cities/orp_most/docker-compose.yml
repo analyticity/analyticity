@@ -53,6 +53,7 @@ services:
       VITE_APP_CENTER_LON: ${VITE_APP_CENTER_LON}
       VITE_APP_CENTER_LAT: ${VITE_APP_CENTER_LAT}
       VITE_APP_CITY: ${VITE_APP_CITY}
+      VITE_API_KEY: ${WEB_API_KEY}
     ports:
       - "${UI_PORT:-8100}:80"
     networks:

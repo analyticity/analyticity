@@ -96,6 +96,8 @@ services:
       VITE_APP_CENTER_LON: ${VITE_APP_CENTER_LON}
       VITE_APP_CENTER_LAT: ${VITE_APP_CENTER_LAT}
       VITE_APP_CITY: ${VITE_APP_CITY:-Brno}
+      # Sent as X-API-Key to api/traffic-jams/admin — must be one of API_KEYS in .env
+      VITE_API_KEY: ${WEB_API_KEY}
     networks:
       - analyticityNetwork
 
