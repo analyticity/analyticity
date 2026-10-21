@@ -251,4 +251,6 @@ analyticity-orp_liberec-bp-ux-ui-1
 | `POSTGRES_*_BRNO` | api | zvoliť |
 | `DATABASE_URL*` | traffic-jams-backend | odvodiť od `POSTGRES_PASSWORD_BRNO` |
 | `SECRET_KEY` | admin-backend | `openssl rand -hex 64` |
+| `API_KEYS` | api, traffic-jams-backend, admin-backend | `openssl rand -hex 32` na klienta, čiarkou oddelené |
+| `WEB_API_KEY` | bp-ux-ui | jeden z `API_KEYS` |
 | `EMAIL_*` | api | SMTP prístupy |

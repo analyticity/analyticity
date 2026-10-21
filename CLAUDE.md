@@ -129,6 +129,8 @@ Kľúčové premenné:
 - `VITE_APP_CITY` — zobrazený názov mesta v UI (`Brno`, `ORP Most`)
 - `POSTGRES_HOST_BRNO` — hostname DB pre API backend (vždy `postgres-timescale`, aj pre non-Brno mestá — historický artefakt v zdrojáku)
 - `POSTGRES_TIMESCALE_PORT` — host port pre postgres (default 5432)
+- `API_KEYS` — povolené API kľúče (čiarkou oddelené) pre api, traffic-jams-backend aj admin-backend; bez nich backendy odmietnu každú požiadavku na dáta (503). Klient posiela kľúč v hlavičke `X-API-Key`.
+- `WEB_API_KEY` — kľúč, ktorý posiela web (`VITE_API_KEY` v `config.js`); musí byť jeden z `API_KEYS`
 
 VITE_* premenné UI sa čítajú za behu: `docker-entrypoint.sh` v `sources/ui` pri štarte kontajnera zapíše `config.js` (`window.__APP_CONFIG__`), takže jeden image slúži všetkým mestám.
 
@@ -173,6 +175,7 @@ Pravidlo: všetky submoduly sledujú vetvu `deploy`. Images extraktorov/transfor
 # - VITE_APP_CENTER_LAT = (BBOX_MIN_LAT + BBOX_MAX_LAT) / 2
 # - VITE_APP_CITY = "Názov Mesta"
 # - DB credentials, SECRET_KEY (openssl rand -hex 64), WAZE_URL, POLICE_REGION
+# - API_KEYS + WEB_API_KEY (openssl rand -hex 32; WEB_API_KEY musí byť v API_KEYS)
 ./analyticity.sh ports <nazov_mesta>   # skontroluj pred štartom
 ./analyticity.sh start <nazov_mesta>
 ```

@@ -55,6 +55,7 @@ services:
       REFRESH_TOKEN_EXPIRE_DAYS: "7"
       ORIGINS: http://localhost:${LOCAL_UI_PORT:-8090}
       VITE_APP_CITY: Brno
+      API_KEYS: dev-local-key
     depends_on:
       db-central:
         condition: service_healthy
@@ -68,6 +69,8 @@ services:
     environment:
       # CORS: web volá api priamo z prehliadača
       ORIGINS: http://localhost:${LOCAL_UI_PORT:-8090}
+      # Rovnaký kľúč posiela web (VITE_API_KEY)
+      API_KEYS: dev-local-key
     ports:
       - "${LOCAL_API_PORT:-8091}:8000"
 
@@ -76,6 +79,7 @@ services:
     build: ${BACKEND_SRC:-../sources/backend}/TrafficJamsBackend
     environment:
       DATA_SOURCE: csv
+      API_KEYS: dev-local-key
     ports:
       - "${LOCAL_TRAFFIC_PORT:-8092}:8000"
 
@@ -88,6 +92,7 @@ services:
       VITE_APP_CITY: Brno
       VITE_APP_CENTER_LAT: "49.2"
       VITE_APP_CENTER_LON: "16.6"
+      VITE_API_KEY: dev-local-key
     depends_on:
       - api
       - admin-backend
