@@ -397,7 +397,7 @@ cmd_local_up() {
   fi
 
   echo "==> Building from $src"
-  dc_local up -d --build
+  dc_local up -d --build --remove-orphans
   echo ""
   echo "  Web:                  http://localhost:${LOCAL_UI_PORT:-8090}"
   echo "  API (Swagger):        http://localhost:${LOCAL_API_PORT:-8091}/docs"
