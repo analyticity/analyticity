@@ -49,7 +49,7 @@ Usage: $(basename "$0") <command> [options]
     db:status                    Show central DB containers
 
   Local (development — built from sources, sample data, no Kafka/TimescaleDB):
-    local:up [--workspace]       Build + start central DB, backends and web
+    local:up [--workspace]       Build + start central DB, api and web
                                    default: from submodules (deploy versions)
                                    --workspace: from sibling clones ../api, ../web,
                                                 ../central_analyticity_db
@@ -65,8 +65,8 @@ Usage: $(basename "$0") <command> [options]
 
 Examples:
   $(basename "$0") local:up --workspace    # try your local changes at http://localhost:8090
-  $(basename "$0") release web             # publish web main as a new bp-ux-ui image
-  $(basename "$0") deploy brno bp-ux-ui    # pull the new image and restart it
+  $(basename "$0") release web             # publish web main as a new web image
+  $(basename "$0") deploy brno web         # pull the new image and restart it
   $(basename "$0") db:start
   $(basename "$0") setup orp_liberec
   $(basename "$0") ports brno              # check for conflicts first
@@ -168,14 +168,12 @@ cmd_ports() {
     echo "WARNING: .env not found, using default ports for check"
   fi
 
-  local api_port traffic_port admin_port ui_port
+  local api_port ui_port
   local pg_port rp_schema rp_proxy rp_kafka rp_metrics
   local pgadmin_port console_port ndic_port police_port
   local acc_port jams_port alerts_port closures_port linker_port
   local otel_grpc otel_http jaeger_ui prometheus_port grafana_port
   api_port=$(_read_env_port "$env_file" API_PORT 8000)
-  traffic_port=$(_read_env_port "$env_file" TRAFFIC_BACKEND_PORT 8081)
-  admin_port=$(_read_env_port "$env_file" ADMIN_BACKEND_PORT 8082)
   ui_port=$(_read_env_port "$env_file" UI_PORT 80)
   pg_port=$(_read_env_port "$env_file" POSTGRES_TIMESCALE_PORT 5432)
   rp_schema=$(_read_env_port "$env_file" REDPANDA_SCHEMA_EXT_PORT 18081)
@@ -202,10 +200,8 @@ cmd_ports() {
 
   # Format: "port:service:profile"
   local entries=(
-    "${ui_port}:bp-ux-ui:always"
+    "${ui_port}:web:always"
     "${api_port}:api:always"
-    "${traffic_port}:traffic-jams-backend:always"
-    "${admin_port}:admin-backend:always"
     "${pg_port}:postgres-timescale:always"
     "${rp_schema}:redpanda (schema-registry ext):always"
     "${rp_proxy}:redpanda (proxy ext):always"
@@ -387,7 +383,6 @@ cmd_local_up() {
   if [[ -z "$(dc_local ps -q 2>/dev/null)" ]]; then
     local entry port conflicts=0
     for entry in "${LOCAL_UI_PORT:-8090}:web" "${LOCAL_API_PORT:-8091}:api" \
-                 "${LOCAL_TRAFFIC_PORT:-8092}:traffic-jams-backend" "${LOCAL_ADMIN_PORT:-8093}:admin-backend" \
                  "${LOCAL_CENTRAL_DB_PORT:-5439}:db-central"; do
       port="${entry%%:*}"
       if _port_in_use "$port"; then
@@ -406,8 +401,6 @@ cmd_local_up() {
   echo ""
   echo "  Web:                  http://localhost:${LOCAL_UI_PORT:-8090}"
   echo "  API (Swagger):        http://localhost:${LOCAL_API_PORT:-8091}/docs"
-  echo "  Traffic Jams Backend: http://localhost:${LOCAL_TRAFFIC_PORT:-8092}/docs"
-  echo "  Admin Backend:        http://localhost:${LOCAL_ADMIN_PORT:-8093}/docs"
   echo "  Central DB:           localhost:${LOCAL_CENTRAL_DB_PORT:-5439}  (db / local, database central_db)"
 }
 
@@ -449,7 +442,7 @@ cmd_release() {
     -f commit_message="Release: merge main into deploy" --jq '"==> deploy is now at " + .sha[0:7]'
   echo "Image build: https://github.com/$GITHUB_ORG/$repo/actions"
   echo "When it finishes, roll it out:  $(basename "$0") deploy <city> <service>"
-  echo "  services: api → api, admin-backend, traffic-jams-backend · web → bp-ux-ui"
+  echo "  services: api → api · web → web"
 }
 
 # ── dispatch ──────────────────────────────────────────────────────────────────
