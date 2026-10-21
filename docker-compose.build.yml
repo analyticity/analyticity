@@ -1,23 +1,28 @@
 # ==========================================================
 # Build and push the two images of the dexter deploy into the dexter registry
-# (dexter.fit.vutbr.cz/analyticity/...), the way every dexter project does it:
+# (dexter.fit.vutbr.cz/analyticity/...), the way every dexter project does it.
 #
-#   ./analyticity.sh sync                 # sources/backend and sources/ui to their deploy branch
+# Images are built ONLY from the deploy branches of api and web: the submodules
+# sources/backend and sources/ui track deploy. main is for checking that everything
+# works together; it goes to deploy with ./analyticity.sh release api|web once it is OK.
+#
+#   git submodule update --init --remote sources/backend sources/ui   # latest deploy
 #   docker login dexter.fit.vutbr.cz
 #   ./dexter.sh build analyticity         # or: docker compose -f docker-compose.build.yml build
 #   ./dexter.sh push analyticity
 #
 # IMAGE_TAG=<tag> also builds a fixed tag for rollbacks (default: latest).
 # dexter runs linux/amd64; on Apple Silicon the build runs in emulation.
+# For local testing of main use ./analyticity.sh local:up --workspace instead.
 # ==========================================================
 
 services:
   api:
     image: ${REGISTRY:-dexter.fit.vutbr.cz/analyticity}/analyticity-api:${IMAGE_TAG:-latest}
     platform: linux/amd64
-    build: ${BACKEND_SRC:-./sources/backend}
+    build: ./sources/backend
 
   web:
     image: ${REGISTRY:-dexter.fit.vutbr.cz/analyticity}/analyticity-web:${IMAGE_TAG:-latest}
     platform: linux/amd64
-    build: ${UI_SRC:-./sources/ui}
+    build: ./sources/ui
