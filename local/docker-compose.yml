@@ -2,7 +2,7 @@
 # Lokálne spustenie aplikácie — na vývoj a testovanie.
 #
 # Bez Kafky, TimescaleDB a extraktorov: api beží nad vzorovými dátami
-# (example_data_from_database), traffic-jams-backend nad CSV. Centrálna DB sa
+# (example_data_from_database), rizikové úseky nad CSV. Centrálna DB sa
 # inicializuje z init_db_central.sql.
 #
 # Images sa buildia zo zdrojákov:
@@ -14,11 +14,11 @@
 #   ./analyticity.sh local:down | local:logs [služba] | local:status | local:reset
 # ==========================================================
 
-# Python backendy sa buildia pre linux/amd64 ako v CI (napr. fiona nemá arm64 wheel),
-# na Apple Silicon ich Docker Desktop spúšťa v emulácii.
+# api sa builduje pre linux/amd64 ako na serveri,
+# na Apple Silicon ho Docker Desktop spúšťa v emulácii.
 #
-# Porty sa dajú zmeniť premennými LOCAL_UI_PORT, LOCAL_API_PORT, LOCAL_TRAFFIC_PORT,
-# LOCAL_ADMIN_PORT a LOCAL_CENTRAL_DB_PORT pri spustení.
+# Porty sa dajú zmeniť premennými LOCAL_UI_PORT, LOCAL_API_PORT a LOCAL_CENTRAL_DB_PORT
+# pri spustení.
 
 name: analyticity-local
 
@@ -40,10 +40,16 @@ services:
       timeout: 3s
       retries: 30
 
-  admin-backend:
+  api:
     platform: linux/amd64
-    build: ${BACKEND_SRC:-../sources/backend}/AdminBackend
+    build: ${BACKEND_SRC:-../sources/backend}
+    # Bez POSTGRES_*_BRNO premenných api servuje vzorové dáta a rizikové úseky počíta nad CSV
     environment:
+      # CORS: web volá api priamo z prehliadača
+      ORIGINS: http://localhost:${LOCAL_UI_PORT:-8090}
+      # Rovnaký kľúč posiela web (VITE_API_KEY)
+      API_KEYS: dev-local-key
+      # Administrácia (/api/v1/admin) nad centrálnou DB; prihlásenie VutAdmin / Test zo seedu
       DB_CENTRAL_HOST: db-central
       DB_CENTRAL_PORT: "5432"
       DB_CENTRAL_NAME: central_db
@@ -53,50 +59,23 @@ services:
       ALGORITHM: HS256
       ACCESS_TOKEN_EXPIRE_MINUTES: "60"
       REFRESH_TOKEN_EXPIRE_DAYS: "7"
-      ORIGINS: http://localhost:${LOCAL_UI_PORT:-8090}
       VITE_APP_CITY: Brno
-      API_KEYS: dev-local-key
     depends_on:
       db-central:
         condition: service_healthy
     ports:
-      - "${LOCAL_ADMIN_PORT:-8093}:8082"
-
-  api:
-    platform: linux/amd64
-    build: ${BACKEND_SRC:-../sources/backend}
-    # Bez POSTGRES_*_BRNO premenných api servuje vzorové dáta
-    environment:
-      # CORS: web volá api priamo z prehliadača
-      ORIGINS: http://localhost:${LOCAL_UI_PORT:-8090}
-      # Rovnaký kľúč posiela web (VITE_API_KEY)
-      API_KEYS: dev-local-key
-    ports:
       - "${LOCAL_API_PORT:-8091}:8000"
-
-  traffic-jams-backend:
-    platform: linux/amd64
-    build: ${BACKEND_SRC:-../sources/backend}/TrafficJamsBackend
-    environment:
-      DATA_SOURCE: csv
-      API_KEYS: dev-local-key
-    ports:
-      - "${LOCAL_TRAFFIC_PORT:-8092}:8000"
 
   web:
     build: ${UI_SRC:-../sources/ui}
     environment:
       VITE_API_BASE_URL: http://localhost:${LOCAL_API_PORT:-8091}/api/v1
-      VITE_API_BACKEND_URL: http://localhost:${LOCAL_ADMIN_PORT:-8093}/
-      VITE_TRAFFIC_BASE_URL: http://localhost:${LOCAL_TRAFFIC_PORT:-8092}
       VITE_APP_CITY: Brno
       VITE_APP_CENTER_LAT: "49.2"
       VITE_APP_CENTER_LON: "16.6"
       VITE_API_KEY: dev-local-key
     depends_on:
       - api
-      - admin-backend
-      - traffic-jams-backend
     ports:
       - "${LOCAL_UI_PORT:-8090}:80"
 

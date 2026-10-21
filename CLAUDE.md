@@ -61,8 +61,6 @@ Výnimka: `infrastructure/docker-compose.yml` v MAIN repo (nie v `sources/`) je 
 |--|--|--|
 | UI | 80 | 8100 |
 | API | 8000 | 8101 |
-| traffic-jams-backend | 8081 | 8102 |
-| admin-backend | 8082 | 8103 |
 | postgres-timescale | 5432 | 5532 |
 | redpanda kafka ext | 19092 | 19192 |
 | redpanda schema-registry | 18081 | 18181 |
@@ -91,7 +89,7 @@ ORP Most má všetky infra porty explicitne v `.env` (+100 offset).
 ./analyticity.sh setup <city>              # nové mesto zo šablóny
 ./analyticity.sh sync                      # submoduly na latest
 ./analyticity.sh db:start / db:stop / db:logs / db:status
-./analyticity.sh local:up [--workspace]     # lokálny stack (8090 web, 8091 api, 8092 traffic, 8093 admin, 5439 DB)
+./analyticity.sh local:up [--workspace]     # lokálny stack (8090 web, 8091 api, 5439 DB)
 ./analyticity.sh local:down / local:reset / local:logs / local:status
 ./analyticity.sh release <repo>            # main → deploy na GitHube (gh api merges) → CI zbuilduje images
 ```
@@ -129,7 +127,7 @@ Kľúčové premenné:
 - `VITE_APP_CITY` — zobrazený názov mesta v UI (`Brno`, `ORP Most`)
 - `POSTGRES_HOST_BRNO` — hostname DB pre API backend (vždy `postgres-timescale`, aj pre non-Brno mestá — historický artefakt v zdrojáku)
 - `POSTGRES_TIMESCALE_PORT` — host port pre postgres (default 5432)
-- `API_KEYS` — povolené API kľúče (čiarkou oddelené) pre api, traffic-jams-backend aj admin-backend; bez nich backendy odmietnu každú požiadavku na dáta (503). Klient posiela kľúč v hlavičke `X-API-Key`.
+- `API_KEYS` — povolené API kľúče (čiarkou oddelené); bez nich api odmietne každú požiadavku na dáta (503). Klient posiela kľúč v hlavičke `X-API-Key`.
 - `WEB_API_KEY` — kľúč, ktorý posiela web (`VITE_API_KEY` v `config.js`); musí byť jeden z `API_KEYS`
 
 VITE_* premenné UI sa čítajú za behu: `docker-entrypoint.sh` v `sources/ui` pri štarte kontajnera zapíše `config.js` (`window.__APP_CONFIG__`), takže jeden image slúži všetkým mestám.
@@ -184,32 +182,23 @@ Pravidlo: všetky submoduly sledujú vetvu `deploy`. Images extraktorov/transfor
 
 ## Deploy na dexter.fit.vutbr.cz — druhá, nezávislá deploy vrstva
 
-Okrem `cities/`/`analyticity.sh` (self-contained multi-city nástroj pre vlastnú VM, vlastná
-DB/Kafka na mesto) existuje aj **dexter deploy vrstva** — súbory v koreni repa
-(`docker-compose.prod.yml`, `nginx.conf`, `.env.example`/`.env`), ktoré nasadzujú **len app
-služby** (`api`, `traffic-jams-backend`, `admin-backend`, `bp-ux-ui`) na spoločný server
-dexter.fit.vutbr.cz cez [dexter](https://github.com/dexter-fit) repo (`projects/analyticity`
-submodul, `dexter.sh remote-sync`/`remote-start`).
+URL: **https://dexter.fit.vutbr.cz/analyticity/brno/**. Súbory v koreni repa:
+`docker-compose.prod.yml` (db-central, api, web, proxy), `docker-compose.build.yml` (build + push
+api a web do **dexter registry** `dexter.fit.vutbr.cz/analyticity/analyticity-{api,web}`),
+`nginx.conf` (projektová proxy), `.env.example`, `configure/sync-data` (`init_db_central.sql`).
+Spravuje sa cez repo [Jirka/dexter](https://github.com/Jirka/dexter) (`projects/analyticity`
+submodul, `dexter.sh build/push/remote-sync/remote-sync-data/remote-start analyticity`) —
+**do toho repa nič nepushovať**, je Jiřího.
 
 Tieto dve vrstvy sa nemiešajú:
 - `cities/*/docker-compose.yml` + `infrastructure/docker-compose.yml` = vlastný postgres-timescale
-  + redpanda + extractory, per-mesto, na vlastnej VM.
-- `docker-compose.prod.yml` (koreň repa) = **žiadna vlastná DB/Kafka** — pripája sa cez externú
-  Docker sieť `infrastructure-network` na dátový stack, ktorý na dexter.fit.vutbr.cz beží
-  **mimo tento repo** (Compose projekt `traffic`, `/home/lazy_lemour/magda/infrastructure`).
-  Momentálne obsahuje dáta pre Brno (`BBOX`/`POLICE_REGION` v jeho `.env` ukazujú na Brno).
+  + redpanda + extractory, per-mesto, na vlastnej VM, images z `ghcr.io/analyticity` (CI).
+- `docker-compose.prod.yml` = **žiadna vlastná DB/Kafka** — api sa cez externú Docker sieť
+  `infrastructure-network` pripája na dátový stack, ktorý na dexteri beží **mimo tento repo**
+  (Compose projekt `traffic`, `/home/lazy_lemour/magda/infrastructure`).
 
-URL: `/analyticity/brno` (viac miest v budúcnosti = ďalšia sada services v tom istom
-`docker-compose.prod.yml` + ďalší `location` blok v `nginx.conf` + rozšírenie
-`PROJECT_URL_PATHS_analyticity` v dexter repe — nie nový dexter projekt).
+Viac miest = ďalšia sada services v `docker-compose.prod.yml` + `location` blok v `nginx.conf` +
+`PROJECT_URL_PATHS_analyticity` v dexter repe.
 
-⚠️ **Otvorené položky, treba doriešiť pred prvým `remote-start`:**
-1. **Centrálna DB nie je na serveri nasadená.** `DB_CENTRAL_*` v `.env.example` sú placeholder —
-   ak `api`/`admin-backend` centrálnu DB pri štarte vyžadujú, treba najprv nasadiť
-   `db/centralDbCreation/docker-compose.yml` na server.
-2. **UI base path — opravené, ale nie live.** Fix (Vite sentinel `base` + entrypoint `sed` +
-   `BrowserRouter basename`) existuje na branchi `feature/runtime-url-base-path` v `sources/ui`
-   (lokálna, needcommitnutá/nepushnutá do jej repa — čaká sa na review a PR). Kým sa nezmerguje,
-   nezbuildí a nepushne nový `ghcr.io/analyticity/bp-ux-ui:latest` image, `docker-compose.prod.yml`
-   síce už posiela `URL_BASE_PATH=/analyticity/brno`, ale bežiaci image ho ignoruje (stará verzia
-   bez tejto podpory) — stránka pod `/analyticity/brno` zostáva prázdna, kým sa image needobuildí.
+Postup nasadenia (čisté nasadenie, API kľúče, policajný extraktor): repo docs,
+`deploy-dexter/README.md`.

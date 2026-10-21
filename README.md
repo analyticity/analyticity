@@ -18,19 +18,17 @@ Platforma na zber, spracovanie a vizualizáciu dopravných dát (nehody, dopravn
                            |
                            v
          +---------------------------------------+
-         |  bp-ux-ui  (React / Vite, nginx)      |
+         |  web  (React / Vite, nginx)           |
          |  Webova mapa s dopravnymi udalostami   |
-         +--------+------------------------------++
-                  |                    |
-              /api/v1              /api/v1
-                  |                    |
-      +-----------+------+  +----------+---------+  +------------------+
-      |  api (FastAPI)   |  | traffic-jams-       |  | admin-backend    |
-      |  port 8000       |  | backend (FastAPI+ML)|  | (FastAPI + JWT)  |
-      |                  |  | port 8081           |  | port 8082        |
-      +--------+---------+  +----------+----------+  +--------+---------+
-               |                       |                       |
-               v                       v                       v
+         +-------------------+-------------------+
+                             |  /api/v1  (X-API-Key)
+         +-------------------+-------------------+      +------------------+
+         |  api (FastAPI)  port 8000             |----->|  centralna DB    |
+         |  mapa, dashboardy, case studies,      |      |  mesta, pouziva- |
+         |  rizikove useky (ML), administracia   |      |  telia, nastav.  |
+         +-------------------+-------------------+      +------------------+
+                             |
+                             v
       +-------------------------------------------------------------------+
       |           postgres-timescale  (TimescaleDB + PostGIS)             |
       |           mestska DB -- nehody, zapchy, uzavierky, OSM            |
@@ -63,8 +61,8 @@ Platforma na zber, spracovanie a vizualizáciu dopravných dát (nehody, dopravn
 1. `waze-feed` / `police-accidents` / `ndic-closures` sťahujú surové dáta a posielajú ich do Kafka tém
 2. Transformery konzumujú Kafka témy, normalizujú dáta a zapisujú do `postgres-timescale`
 3. `event-linker` prepája nehody so zápchovými udalosťami
-4. `api` + `traffic-jams-backend` čítajú z DB a servujú REST endpointy
-5. `bp-ux-ui` zobrazuje dáta na mape
+4. `api` číta z DB a servuje REST endpointy (aj rizikové úseky a administráciu)
+5. `web` zobrazuje dáta na mape a v dashboardoch
 
 ---
 
@@ -98,8 +96,8 @@ analyticity/
 │   └── docker-compose.yml
 │
 └── sources/                    # submoduly — zdrojový kód (nerob tu zmeny priamo)
-    ├── backend/                # analyticity/api — api, AdminBackend, TrafficJamsBackend
-    ├── ui/                     # analyticity/web — bp-ux-ui (React)
+    ├── backend/                # analyticity/api — jedno API (mapa, rizikové úseky, administrácia)
+    ├── ui/                     # analyticity/web — web (React)
     └── data-pipeline/          # analyticity/data-pipeline
         ├── infrastructure/     # docker-compose pre TimescaleDB + Redpanda
         ├── db_migrate/         # Flyway migrácie + OSM import
@@ -112,7 +110,7 @@ analyticity/
 
 ## Lokálne spustenie (vývoj a testovanie)
 
-Spustí aplikáciu na vlastnom počítači bez Kafky, TimescaleDB a extraktorov: centrálna DB, `api` nad vzorovými dátami, `traffic-jams-backend` nad CSV, `admin-backend` a web. Images sa buildia zo zdrojákov, prístup do ghcr.io netreba.
+Spustí aplikáciu na vlastnom počítači bez Kafky, TimescaleDB a extraktorov: centrálna DB, `api` nad vzorovými dátami (rizikové úseky nad CSV) a web. Images sa buildia zo zdrojákov, prístup do ghcr.io netreba.
 
 Potrebuješ Docker Desktop. Na Apple Silicon sa Python backendy buildia pre `linux/amd64` (ako v CI), prvý build preto trvá niekoľko minút.
 
@@ -284,8 +282,6 @@ Každé mesto musí mať **unikátne porty** — nastav ich v `cities/<mesto>/.e
 |--|--|--|
 | UI | 80 | 8100 |
 | API | 8000 | 8101 |
-| Traffic Jams Backend | 8081 | 8102 |
-| Admin Backend | 8082 | 8103 |
 | postgres-timescale | 5432 | 5532 |
 | Redpanda (Kafka ext) | 19092 | 19192 |
 
@@ -302,13 +298,13 @@ Každé repo má vetvu `main` (vývoj) a `deploy` (čo sa nasadzuje). Push do `d
 ./analyticity.sh release web      # alebo: api, central_analyticity_db, data-pipeline, simulations
 
 # 2. Po dobehnutí buildu (odkaz vypíše príkaz) nasaď novú verziu
-./analyticity.sh deploy brno bp-ux-ui
+./analyticity.sh deploy brno web
 ```
 
 | Repo | Služby (images) |
 |------|-----------------|
-| `api` | `api`, `admin-backend`, `traffic-jams-backend` |
-| `web` | `bp-ux-ui` |
+| `api` | `api` |
+| `web` | `web` |
 | `central_analyticity_db` | `central-analyticity-db` |
 
 `release` potrebuje [GitHub CLI](https://cli.github.com/) prihlásené cez `gh auth login`.
@@ -319,7 +315,7 @@ Každé repo má vetvu `main` (vývoj) a `deploy` (čo sa nasadzuje). Push do `d
 
 ```bash
 # Nasadiť novú verziu jednej služby (napr. po update UI)
-./analyticity.sh deploy brno bp-ux-ui
+./analyticity.sh deploy brno web
 ./analyticity.sh deploy brno api
 
 # Nasadiť všetky služby mesta
@@ -360,7 +356,7 @@ docker compose --project-name analyticity-brno --profile all down -v
     restart <mesto|--all> [profil] Reštartuj
     pull    <mesto|--all>          Stiahni najnovšie Docker images
     update  <mesto|--all>          Pull + restart
-    deploy  <mesto> <služba>       Pull + reštart jednej služby (napr. api, bp-ux-ui)
+    deploy  <mesto> <služba>       Pull + reštart jednej služby (napr. api, web)
     logs    <mesto> [služba]       Logy (voliteľne iba jednej služby)
     status  <mesto|--all>          Bežiace kontajnery
     sync                           Posuň všetky submoduly na latest
@@ -404,8 +400,6 @@ docker compose --project-name analyticity-brno --profile all down -v
 |--------|-----|
 | Webová aplikácia | http://localhost |
 | API (Swagger) | http://localhost:8000/docs |
-| Traffic Jams Backend (Swagger) | http://localhost:8081/docs |
-| Admin Backend (Swagger) | http://localhost:8082/docs |
 
 ### Nástroje (profil `tools`)
 

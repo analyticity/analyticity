@@ -96,8 +96,6 @@ REGISTRY=ghcr.io/analyticity
 IMAGE_TAG=latest
 
 API_PORT=8000              # zmeň ak iné mesto už tento port používa
-TRAFFIC_BACKEND_PORT=8081
-ADMIN_BACKEND_PORT=8082
 UI_PORT=80
 ```
 
@@ -121,7 +119,7 @@ DB_CENTRAL_USER=db                    # = POSTGRES_USER_CENTRAL
 DB_CENTRAL_PASSWORD=<rovnaké heslo>   # = POSTGRES_PASSWORD_CENTRAL
 ```
 
-> ⚠️ **Poznámka:** AdminBackend číta premenné `DB_CENTRAL_*` (nie `POSTGRES_*_CENTRAL`).  
+> ⚠️ **Poznámka:** api číta premenné `DB_CENTRAL_*` (nie `POSTGRES_*_CENTRAL`).  
 > Toto je historická nezrovnalosť v zdrojovom kóde — premenné v `.env` tu pomenované správne.
 
 ### 5d. City-local DB
@@ -139,22 +137,18 @@ POSTGRES_PASSWORD_BRNO=<zvoľ heslo>
 > ℹ️ Premenné majú suffix `_BRNO` pre všetky mestá — je to historický artefakt  
 > v zdrojovom kóde API. Hodnoty sú city-specific napriek názvom.
 
-### 5e. TrafficJamsBackend
+### 5e. Rizikové úseky (súčasť api)
 
-Skopíruj heslo z `POSTGRES_PASSWORD_BRNO` do connection stringov:
+Používajú tú istú mestskú DB ako zvyšok api (`POSTGRES_*_BRNO`), netreba nič navyše. Voliteľne:
 
 ```env
-DATABASE_URL=postgresql+asyncpg://postgres:<heslo>@local_db:5432/analyticity
-DATABASE_URL_SYNC=postgresql+psycopg2://postgres:<heslo>@local_db:5432/analyticity
-DATA_SOURCE=postgres
 DBSCAN_EPS_METERS=100.0
 DBSCAN_MIN_SAMPLES=3
 AUTO_CLUSTER_ON_STARTUP=false
-MODELS_DIR=models
 WORKERS=2
 ```
 
-### 5f. AdminBackend — JWT secret
+### 5f. Prihlásenie do administrácie — JWT secret
 
 Vygeneruj unikátny kľúč pre každé mesto:
 
@@ -195,9 +189,7 @@ EMAIL_RECIPIENT=spravca@example.cz
 Kontajnery budú pomenované `analyticity-<mesto>-<service>-1`, napr.:
 ```
 analyticity-orp_liberec-api-1
-analyticity-orp_liberec-traffic-jams-backend-1
-analyticity-orp_liberec-admin-backend-1
-analyticity-orp_liberec-bp-ux-ui-1
+analyticity-orp_liberec-web-1
 ```
 
 ### Porty
@@ -205,8 +197,6 @@ analyticity-orp_liberec-bp-ux-ui-1
 | Služba | Port (default) |
 |--------|---------------|
 | API | `API_PORT` (8000) |
-| TrafficJamsBackend | `TRAFFIC_BACKEND_PORT` (8081) |
-| AdminBackend | `ADMIN_BACKEND_PORT` (8082) |
 | UI | `UI_PORT` (80) |
 
 ---
@@ -246,11 +236,10 @@ analyticity-orp_liberec-bp-ux-ui-1
 |----------|-----------|---------------|
 | `REGISTRY`, `IMAGE_TAG` | docker-compose | tu |
 | `*_PORT` | docker-compose | tu (unikátne per server) |
-| `ORIGINS` | api, admin-backend | URL frontendu |
-| `DB_CENTRAL_*` | admin-backend | kopírovať z `db/.env` |
+| `ORIGINS` | api | URL frontendu |
+| `DB_CENTRAL_*` | api (administrácia) | kopírovať z `db/.env` |
 | `POSTGRES_*_BRNO` | api | zvoliť |
-| `DATABASE_URL*` | traffic-jams-backend | odvodiť od `POSTGRES_PASSWORD_BRNO` |
-| `SECRET_KEY` | admin-backend | `openssl rand -hex 64` |
-| `API_KEYS` | api, traffic-jams-backend, admin-backend | `openssl rand -hex 32` na klienta, čiarkou oddelené |
-| `WEB_API_KEY` | bp-ux-ui | jeden z `API_KEYS` |
+| `SECRET_KEY` | api (administrácia) | `openssl rand -hex 64` |
+| `API_KEYS` | api | `openssl rand -hex 32` na klienta, čiarkou oddelené |
+| `WEB_API_KEY` | web | jeden z `API_KEYS` |
 | `EMAIL_*` | api | SMTP prístupy |
