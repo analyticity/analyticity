@@ -62,7 +62,7 @@ services:
       # Served under https://dexter.fit.vutbr.cz/analyticity/brno/ (rewritten into the build at start)
       URL_BASE_PATH: /analyticity/brno
       VITE_API_BASE_URL: /analyticity/brno/api/v1
-      # Sent as X-API-Key with every API call — must be one of API_KEYS in .env
+      # Sent as X-API-Key with every API call; the api lets this key reach only the web's endpoints
       VITE_API_KEY: ${WEB_API_KEY}
       VITE_APP_CENTER_LON: ${VITE_APP_CENTER_LON:-16.6}
       VITE_APP_CENTER_LAT: ${VITE_APP_CENTER_LAT:-49.2}
