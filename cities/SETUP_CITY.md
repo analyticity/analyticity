@@ -240,6 +240,6 @@ analyticity-orp_liberec-web-1
 | `DB_CENTRAL_*` | api (administrácia) | kopírovať z `db/.env` |
 | `POSTGRES_*_BRNO` | api | zvoliť |
 | `SECRET_KEY` | api (administrácia) | `openssl rand -hex 64` |
-| `API_KEYS` | api | `openssl rand -hex 32` na klienta, čiarkou oddelené |
-| `WEB_API_KEY` | web | jeden z `API_KEYS` |
+| `API_KEYS` | api | `openssl rand -hex 32` na človeka (ty, študenti), čiarkou oddelené; plný prístup |
+| `WEB_API_KEY` | web, api | `openssl rand -hex 32`, iný než `API_KEYS`; api ním pustí len agregáty webu |
 | `EMAIL_*` | api | SMTP prístupy |
