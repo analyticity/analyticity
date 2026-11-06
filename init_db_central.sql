@@ -661,3 +661,11 @@ VALUES
   1
 )
 ON CONFLICT DO NOTHING;
+-- Mesto dedí predvolené farby (Town IS NULL) a má riadok len pre farbu, ktorá sa líši
+-- (api modules/admin/router.py _town_settings). Kópie s rovnakou hodnotou zmaž.
+DELETE FROM Settings s
+USING Settings d
+WHERE s.Town IS NOT NULL
+  AND d.Town IS NULL
+  AND d.VarName = s.VarName
+  AND lower(trim(d.Setting)) = lower(trim(s.Setting));
