@@ -8,17 +8,18 @@ CREATE EXTENSION IF NOT EXISTS postgis;
 CREATE TABLE IF NOT EXISTS Towns (
   ID SERIAL PRIMARY KEY,
   Name TEXT UNIQUE NOT NULL,              -- napr. 'brno'
-  WazeLink TEXT NOT NULL,
+  WazeLink TEXT,                          -- nepoužíva sa (feed Waze je v .env pipeline), zrušiť
 	UrlLink TEXT NOT NULL,
-  DBHost TEXT NOT NULL,                  -- docker host napr. 'db_brno'
-  DBPortExternal INTEGER NOT NULL,  -- port dostupný zvonku (napr. 5433)
-  DBPortInternal INTEGER NOT NULL DEFAULT 5432, -- port vnútri kontajnera (zvyčajne 5432)
-  DBName TEXT NOT NULL,
-  DBUser TEXT NOT NULL,
-  DBPassword TEXT NOT NULL,
+  -- pripojenie k DB mesta sa nepoužíva (api ho berie z .env nasadenia), stĺpce DB* zrušiť
+  DBHost TEXT,
+  DBPortExternal INTEGER,
+  DBPortInternal INTEGER,
+  DBName TEXT,
+  DBUser TEXT,
+  DBPassword TEXT,
   Description TEXT,
   Active BOOLEAN DEFAULT TRUE,
-  CoverageArea TEXT,            -- územie pokrytia (napr. Brno, JMK)
+  CoverageArea TEXT,            -- nepoužíva sa (oblasť je BBOX_* v .env pipeline), zrušiť
   CreatedAt TIMESTAMPTZ DEFAULT now(),
   UpdatedAt TIMESTAMPTZ DEFAULT now()
 );
@@ -47,13 +48,16 @@ CREATE TABLE IF NOT EXISTS Users (
   Active BOOLEAN DEFAULT TRUE,
   CreatedAt TIMESTAMPTZ DEFAULT now(),
   UpdatedAt TIMESTAMPTZ DEFAULT now(),
-  Town INTEGER
+  Town INTEGER,
+  -- raised on logout, password change and deactivation; older login tokens stop working
+  TokenVersion INTEGER NOT NULL DEFAULT 0
 );
 
 ALTER TABLE Users
 ADD CONSTRAINT fk_users_town
 FOREIGN KEY (Town) REFERENCES Towns(ID);
 
+-- Nepoužíva sa: správca mesta má pevné práva podľa role (api modules/admin/router.py), zrušiť
 -- Tabuľka nastaveni ktore sa zobraznie pre mesta
 CREATE TABLE IF NOT EXISTS Show (
   ID SERIAL PRIMARY KEY,
