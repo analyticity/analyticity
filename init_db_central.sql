@@ -19,8 +19,9 @@ CREATE TABLE IF NOT EXISTS Towns (
   DBPassword TEXT,
   Description TEXT,
   Active BOOLEAN DEFAULT TRUE,            -- nepoužíva sa, nahrádza ho Status; zrušiť
-  -- soon = na úvodnej stránke ako Pripravujeme, live = spustené, hidden = nezobrazí sa
-  Status TEXT NOT NULL DEFAULT 'live' CHECK (Status IN ('soon', 'live', 'hidden')),
+  -- soon = na úvodnej stránke ako Pripravujeme, live = spustené, hidden = nezobrazí sa,
+  -- archived = archivované v administrácii (dá sa obnoviť alebo zmazať natrvalo)
+  Status TEXT NOT NULL DEFAULT 'live' CONSTRAINT towns_status_check CHECK (Status IN ('soon', 'live', 'hidden', 'archived')),
   CoverageArea TEXT,            -- nepoužíva sa (oblasť je BBOX_* v .env pipeline), zrušiť
   CreatedAt TIMESTAMPTZ DEFAULT now(),
   UpdatedAt TIMESTAMPTZ DEFAULT now()
@@ -70,6 +71,19 @@ CREATE TABLE IF NOT EXISTS PasswordTokens (
   ExpiresAt TIMESTAMPTZ NOT NULL,
   UsedAt TIMESTAMPTZ
 );
+
+-- Záznam zmien v administrácii (kto, kedy, čo); meno sa ukladá aj po zmazaní účtu
+CREATE TABLE IF NOT EXISTS AuditLog (
+  ID SERIAL PRIMARY KEY,
+  At TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UserId INTEGER,
+  UserName TEXT,
+  Action TEXT NOT NULL,
+  TargetType TEXT NOT NULL,
+  TargetName TEXT,
+  Details TEXT
+);
+CREATE INDEX IF NOT EXISTS auditlog_at ON AuditLog (At DESC);
 
 -- Osobné API kľúče (študenti, výskum); v DB je len SHA-256 kľúča
 CREATE TABLE IF NOT EXISTS ApiKeys (
