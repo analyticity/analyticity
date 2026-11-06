@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS Towns (
   ID SERIAL PRIMARY KEY,
   Name TEXT UNIQUE NOT NULL,              -- napr. 'brno'
   WazeLink TEXT,                          -- nepoužíva sa (feed Waze je v .env pipeline), zrušiť
-	UrlLink TEXT NOT NULL,
+	UrlLink TEXT,                           -- kam vedie karta mesta, ak mesto nebeží v tejto aplikácii
   -- pripojenie k DB mesta sa nepoužíva (api ho berie z .env nasadenia), stĺpce DB* zrušiť
   DBHost TEXT,
   DBPortExternal INTEGER,
@@ -18,7 +18,9 @@ CREATE TABLE IF NOT EXISTS Towns (
   DBUser TEXT,
   DBPassword TEXT,
   Description TEXT,
-  Active BOOLEAN DEFAULT TRUE,
+  Active BOOLEAN DEFAULT TRUE,            -- nepoužíva sa, nahrádza ho Status; zrušiť
+  -- soon = na úvodnej stránke ako Pripravujeme, live = spustené, hidden = nezobrazí sa
+  Status TEXT NOT NULL DEFAULT 'live' CHECK (Status IN ('soon', 'live', 'hidden')),
   CoverageArea TEXT,            -- nepoužíva sa (oblasť je BBOX_* v .env pipeline), zrušiť
   CreatedAt TIMESTAMPTZ DEFAULT now(),
   UpdatedAt TIMESTAMPTZ DEFAULT now()
@@ -100,23 +102,21 @@ FOREIGN KEY (Town) REFERENCES Towns(ID);
 ALTER TABLE Show
 ADD CONSTRAINT uq_show_town UNIQUE (Town);
 
-INSERT INTO Towns (Name, WazeLink, UrlLink, DBHost, DBPortExternal, DBPortInternal, DBName, DBUser, DBPassword, Description, CoverageArea)
+-- Mesto je register (názov, popis, odkaz, stav). Prihlasovacie údaje k DB a feed Waze sem nepatria:
+-- api berie DB z .env nasadenia, pipeline feed a oblasť z vlastného .env.
+INSERT INTO Towns (Name, UrlLink, Description, Status)
 VALUES
 (
   'Brno',
-  'https://www.waze.com/row-partnerhub-api/partners/16198912488/waze-feeds/9c8b4163-e3c2-436f-86b7-3db2058ce7a1?format=1',
   'https://dexter.fit.vutbr.cz/analyticity/brno/map',
-  'db_brno',
-  5432,
-  5432,
-  'traffic',
-  'traffic',
-  'brno_timescale_pass',
   '{"cz":"Jihomoravský kraj · druhé největší město Česka. Data pokrývají město i jeho blízké okolí.","en":"South Moravian Region · the second-largest city in Czechia. Data covers the city and its immediate surroundings."}',
-  '{
-    "p1": { "lng": 16.4, "lat": 49.1 },
-    "p2": { "lng": 16.8, "lat": 49.3 }
-  }'
+  'live'
+),
+(
+  'ORP Most',
+  NULL,
+  '{"cz":"Ústecký kraj · obec s rozšířenou působností","en":"Ústí nad Labem Region · municipality with extended powers"}',
+  'soon'
 )
 ON CONFLICT DO NOTHING;
 
@@ -661,6 +661,12 @@ VALUES
   1
 )
 ON CONFLICT DO NOTHING;
+-- ORP Most: modrá z mapového portálu mesta (opendata.mesto-most.cz); ostatné farby dedí
+INSERT INTO Settings (VarName, SettingName, Setting, Description, GroupName, Town)
+SELECT d.VarName, d.SettingName, '#0079C1', d.Description, d.GroupName, t.ID
+FROM Settings d, Towns t
+WHERE d.Town IS NULL AND d.VarName IN ('primary', 'sidebar-primary', 'accent') AND t.Name = 'ORP Most';
+
 -- Mesto dedí predvolené farby (Town IS NULL) a má riadok len pre farbu, ktorá sa líši
 -- (api modules/admin/router.py _town_settings). Kópie s rovnakou hodnotou zmaž.
 DELETE FROM Settings s
