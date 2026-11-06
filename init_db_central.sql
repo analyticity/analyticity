@@ -57,6 +57,21 @@ ALTER TABLE Users
 ADD CONSTRAINT fk_users_town
 FOREIGN KEY (Town) REFERENCES Towns(ID);
 
+-- Osobné API kľúče (študenti, výskum); v DB je len SHA-256 kľúča
+CREATE TABLE IF NOT EXISTS ApiKeys (
+  ID SERIAL PRIMARY KEY,
+  KeyHash TEXT UNIQUE NOT NULL,
+  Prefix TEXT NOT NULL,
+  Owner TEXT NOT NULL,
+  Email TEXT NOT NULL,
+  Note TEXT,
+  CreatedAt TIMESTAMPTZ DEFAULT now(),
+  ExpiresAt TIMESTAMPTZ NOT NULL,
+  RevokedAt TIMESTAMPTZ,
+  LastUsedAt TIMESTAMPTZ,
+  CreatedBy INTEGER REFERENCES Users(ID) ON DELETE SET NULL
+);
+
 -- Nepoužíva sa: správca mesta má pevné práva podľa role (api modules/admin/router.py), zrušiť
 -- Tabuľka nastaveni ktore sa zobraznie pre mesta
 CREATE TABLE IF NOT EXISTS Show (
