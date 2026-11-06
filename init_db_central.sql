@@ -52,12 +52,24 @@ CREATE TABLE IF NOT EXISTS Users (
   UpdatedAt TIMESTAMPTZ DEFAULT now(),
   Town INTEGER,
   -- raised on logout, password change and deactivation; older login tokens stop working
-  TokenVersion INTEGER NOT NULL DEFAULT 0
+  TokenVersion INTEGER NOT NULL DEFAULT 0,
+  LastLoginAt TIMESTAMPTZ
 );
 
 ALTER TABLE Users
 ADD CONSTRAINT fk_users_town
 FOREIGN KEY (Town) REFERENCES Towns(ID);
+
+-- Jednorazové odkazy na nastavenie hesla (pozvánka 7 dní, nové heslo 24 h); v DB len SHA-256
+CREATE TABLE IF NOT EXISTS PasswordTokens (
+  ID SERIAL PRIMARY KEY,
+  UserId INTEGER NOT NULL REFERENCES Users(ID) ON DELETE CASCADE,
+  TokenHash TEXT UNIQUE NOT NULL,
+  Purpose TEXT NOT NULL CHECK (Purpose IN ('invite', 'reset')),
+  CreatedAt TIMESTAMPTZ DEFAULT now(),
+  ExpiresAt TIMESTAMPTZ NOT NULL,
+  UsedAt TIMESTAMPTZ
+);
 
 -- Osobné API kľúče (študenti, výskum); v DB je len SHA-256 kľúča
 CREATE TABLE IF NOT EXISTS ApiKeys (
