@@ -51,6 +51,8 @@ services:
       API_KEYS: dev-full-key
       # Kľúč webu (VITE_API_KEY), api ním pustí len endpointy, ktoré web zobrazuje
       WEB_API_KEY: dev-local-key
+      # Swagger /docs lokálne áno, na verejnom nasadení nie
+      ENABLE_DOCS: "1"
       # Administrácia (/api/v1/admin) nad centrálnou DB; prihlásenie VutAdmin / Test zo seedu
       DB_CENTRAL_HOST: db-central
       DB_CENTRAL_PORT: "5432"
