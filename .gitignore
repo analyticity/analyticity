@@ -1,3 +1,5 @@
 cities/**/.env
 db/centralDbCreation/.env
 /.env
+.env.data
+.env.data.local
