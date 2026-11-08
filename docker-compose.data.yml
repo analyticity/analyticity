@@ -250,6 +250,8 @@ services:
       QUARKUS_OTEL_SDK_DISABLED: "true"
       # 10s while it links the whole history after the migration, then 2m
       LINKER_INTERVAL: ${LINKER_INTERVAL:-2m}
+      # first start on an empty event_linker_state: link history day by day from this date
+      LINKER_BACKFILL_FROM: ${LINKER_BACKFILL_FROM:-}
       PORT: "9999"
     healthcheck:
       <<: *health
