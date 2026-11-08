@@ -4,10 +4,12 @@
 # Four containers: central DB, api (everything the web calls: map, dashboards, case
 # studies, risky road sections, administration), web and the project proxy.
 #
-# The data stack (postgres-timescale, redpanda, extractors, transformers) is NOT part of
-# this project: it runs on the server as the separate Compose project `traffic`
-# (/home/lazy_lemour/magda/infrastructure). api reaches its database over the external
-# Docker network `infrastructure-network`.
+# The data stack (database, redpanda, extractors, transformers) is NOT part of this project:
+# since 8 Nov 2026 it is the Compose project `analyticity-data` (docker-compose.data.yml,
+# /home/lazy_lemour/magda/analyticity-data); api reaches its database analyticity-db-brno over the
+# external network `analyticity-data` (POSTGRES_HOST_BRNO=analyticity-db-brno in .env). The old stack
+# `traffic` (/home/lazy_lemour/magda/infrastructure, network `infrastructure-network`) stays a week
+# as a fallback. Start the data stack before this file is synced: both networks must exist.
 #
 # Images live in the dexter registry, built and pushed from docker-compose.build.yml:
 #   ./dexter.sh build analyticity && ./dexter.sh push analyticity
@@ -52,6 +54,7 @@ services:
         condition: service_healthy
     networks:
       - analyticityNetwork
+      - analyticity-data
       - infrastructure-network
 
   web:
@@ -62,7 +65,7 @@ services:
       # Served under https://dexter.fit.vutbr.cz/analyticity/brno/ (rewritten into the build at start)
       URL_BASE_PATH: /analyticity/brno
       VITE_API_BASE_URL: /analyticity/brno/api/v1
-      # Sent as X-API-Key with every API call — must be one of API_KEYS in .env
+      # Sent as X-API-Key with every API call; the api lets this key reach only the web's endpoints
       VITE_API_KEY: ${WEB_API_KEY}
       VITE_APP_CENTER_LON: ${VITE_APP_CENTER_LON:-16.6}
       VITE_APP_CENTER_LAT: ${VITE_APP_CENTER_LAT:-49.2}
@@ -90,7 +93,11 @@ networks:
     external: true
   analyticityNetwork:
     name: analyticityNetwork
-  # created by the `traffic` data stack
+  # created by the data stack analyticity-data (docker-compose.data.yml)
+  analyticity-data:
+    name: analyticity-data
+    external: true
+  # created by the old data stack `traffic` (fallback until it is removed)
   infrastructure-network:
     name: infrastructure-network
     external: true

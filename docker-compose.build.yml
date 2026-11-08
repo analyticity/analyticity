@@ -11,6 +11,10 @@
 #   ./dexter.sh build analyticity         # or: docker compose -f docker-compose.build.yml build
 #   ./dexter.sh push analyticity
 #
+# The data stack (docker-compose.data.yml) is built from the submodule sources/data-pipeline (deploy
+# branch) the same way; build only what changed, e.g. ./dexter.sh build analyticity jams-transformer.
+# git submodule update --init --remote sources/data-pipeline   # latest deploy of data-pipeline
+#
 # IMAGE_TAG=<tag> also builds a fixed tag for rollbacks (default: latest).
 # dexter runs linux/amd64; on Apple Silicon the build runs in emulation.
 # For local testing of main use ./analyticity.sh local:up --workspace instead.
@@ -26,3 +30,56 @@ services:
     image: ${REGISTRY:-dexter.fit.vutbr.cz/analyticity}/analyticity-web:${IMAGE_TAG:-latest}
     platform: linux/amd64
     build: ./sources/ui
+
+  # ---- data stack (docker-compose.data.yml) ----
+  db:
+    image: ${REGISTRY:-dexter.fit.vutbr.cz/analyticity}/analyticity-db:${IMAGE_TAG:-latest}
+    platform: linux/amd64
+    build:
+      context: ./sources/data-pipeline/infrastructure/compose/dev
+      dockerfile: Dockerfile.db
+
+  db-migrate:
+    image: ${REGISTRY:-dexter.fit.vutbr.cz/analyticity}/analyticity-db-migrate:${IMAGE_TAG:-latest}
+    platform: linux/amd64
+    build: ./sources/data-pipeline/db_migrate
+
+  waze:
+    image: ${REGISTRY:-dexter.fit.vutbr.cz/analyticity}/analyticity-waze:${IMAGE_TAG:-latest}
+    platform: linux/amd64
+    build: ./sources/data-pipeline/waze
+
+  ndic-closures:
+    image: ${REGISTRY:-dexter.fit.vutbr.cz/analyticity}/analyticity-ndic-closures:${IMAGE_TAG:-latest}
+    platform: linux/amd64
+    build: ./sources/data-pipeline/ndic_closures
+
+  police-accidents-extractor:
+    image: ${REGISTRY:-dexter.fit.vutbr.cz/analyticity}/analyticity-police-accidents-extractor:${IMAGE_TAG:-latest}
+    platform: linux/amd64
+    build: ./sources/data-pipeline/police_accidents_extractor
+
+  accidents-transformer:
+    image: ${REGISTRY:-dexter.fit.vutbr.cz/analyticity}/analyticity-accidents-transformer:${IMAGE_TAG:-latest}
+    platform: linux/amd64
+    build: ./sources/data-pipeline/accidents-transformer
+
+  alerts-transformer:
+    image: ${REGISTRY:-dexter.fit.vutbr.cz/analyticity}/analyticity-alerts-transformer:${IMAGE_TAG:-latest}
+    platform: linux/amd64
+    build: ./sources/data-pipeline/alerts_transformator
+
+  jams-transformer:
+    image: ${REGISTRY:-dexter.fit.vutbr.cz/analyticity}/analyticity-jams-transformer:${IMAGE_TAG:-latest}
+    platform: linux/amd64
+    build: ./sources/data-pipeline/jams_transformers
+
+  closures-transformer:
+    image: ${REGISTRY:-dexter.fit.vutbr.cz/analyticity}/analyticity-closures-transformer:${IMAGE_TAG:-latest}
+    platform: linux/amd64
+    build: ./sources/data-pipeline/closures-transformer
+
+  event-linker:
+    image: ${REGISTRY:-dexter.fit.vutbr.cz/analyticity}/analyticity-event-linker:${IMAGE_TAG:-latest}
+    platform: linux/amd64
+    build: ./sources/data-pipeline/event_linker

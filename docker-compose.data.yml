@@ -1,0 +1,274 @@
+# ==========================================================
+# Data stack of Analyticity on dexter (since the release of 8 Nov 2026): the city database
+# (Brno), Redpanda, extractors (Waze, NDIC, Police CR), transformers and the event linker.
+#
+# Server: /home/lazy_lemour/magda/analyticity-data, Compose project analyticity-data
+#   docker compose -p analyticity-data pull
+#   docker compose -p analyticity-data up -d db redpanda && docker compose -p analyticity-data run --rm db-migrate
+#   docker compose -p analyticity-data up -d <service>     # one service at a time, never down -v
+# The app (docker-compose.prod.yml) reaches the database as analyticity-db-brno over the network
+# analyticity-data.
+#
+# Images: docker-compose.build.yml (./dexter.sh build analyticity, ./dexter.sh push analyticity),
+# built from the deploy branch of data-pipeline (submodule sources/data-pipeline).
+# Locally: docker network create kristyna-dev (dexter's shared proxy network) once, then the same
+# commands with --env-file .env.data.local.
+# Plan and steps: docs repo, deploy-dexter/vydanie-2026-11-08.md.
+# ==========================================================
+
+x-app-env: &app-env
+  KAFKA_BROKERS: redpanda:9092
+  QUARKUS_OTEL_SDK_DISABLED: "true"
+  QUARKUS_DATASOURCE_DB_KIND: postgresql
+  QUARKUS_DATASOURCE_JDBC_URL: jdbc:postgresql://db:5432/${POSTGRES_DB}
+  QUARKUS_DATASOURCE_USERNAME: ${POSTGRES_USER}
+  QUARKUS_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
+  TOPIC_JAMS: raw.waze.jams
+  TOPIC_ALERTS: raw.waze.alerts
+  TOPIC_IRREGULARS: raw.waze.irregularities
+  TOPIC_CLOSURES: raw.ndic.closures
+  TOPIC_ACCIDENTS: raw.police.accidents
+
+x-bbox: &bbox
+  BBOX_MIN_LON: ${BBOX_MIN_LON}
+  BBOX_MIN_LAT: ${BBOX_MIN_LAT}
+  BBOX_MAX_LON: ${BBOX_MAX_LON}
+  BBOX_MAX_LAT: ${BBOX_MAX_LAT}
+
+x-health: &health
+  interval: 10s
+  timeout: 3s
+  retries: 10
+  start_period: 30s
+
+x-java: &java
+  restart: unless-stopped
+  mem_limit: 512m
+  networks: [data]
+
+services:
+  db:
+    container_name: analyticity-db-brno
+    image: ${REGISTRY:-dexter.fit.vutbr.cz/analyticity}/analyticity-db:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    command: [postgres, -c, shared_preload_libraries=timescaledb, -c, shared_buffers=1GB, -c, work_mem=16MB,
+              -c, effective_cache_size=4GB, -c, max_connections=100]
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 30s
+    networks: [data]
+
+  redpanda:
+    container_name: analyticity-redpanda
+    image: docker.redpanda.com/redpandadata/redpanda:v25.2.5
+    restart: unless-stopped
+    command:
+      - redpanda
+      - start
+      - --kafka-addr internal://0.0.0.0:9092
+      - --advertise-kafka-addr internal://redpanda:9092
+      - --rpc-addr redpanda:33145
+      - --advertise-rpc-addr redpanda:33145
+      - --mode dev-container
+      - --smp 1
+      - --memory=1G
+      - --reserve-memory=0M
+      - --default-log-level=info
+      - --set
+      - redpanda.log_compression_type=gzip
+    volumes:
+      - redpanda_data:/var/lib/redpanda/data
+    healthcheck:
+      test: ["CMD", "bash", "-lc", "rpk cluster info --brokers=redpanda:9092 >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 3s
+      retries: 30
+    networks: [data]
+
+  # Schema from the migrations (V1-V13) and the seeds. No OSM import: road_segments come from the
+  # old database (their ids are referenced by the events), see the migration scripts.
+  db-migrate:
+    container_name: analyticity-db-migrate
+    image: ${REGISTRY:-dexter.fit.vutbr.cz/analyticity}/analyticity-db-migrate:${IMAGE_TAG:-latest}
+    restart: "no"
+    environment:
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_NAME: ${POSTGRES_DB}
+      DB_USER: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      RUN_SEEDS: "true"
+      RUN_OSM_IMPORT: "false"
+      FLYWAY_CONNECT_RETRIES: 30
+    depends_on:
+      db:
+        condition: service_healthy
+    networks: [data]
+
+  waze:
+    <<: *java
+    container_name: analyticity-waze
+    image: ${REGISTRY:-dexter.fit.vutbr.cz/analyticity}/analyticity-waze:${IMAGE_TAG:-latest}
+    environment:
+      <<: *app-env
+      WAZE_URL: ${WAZE_URL}
+      FETCH_SECONDS: 60s
+      PORT: "8080"
+    healthcheck:
+      <<: *health
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/q/health/ready || exit 1"]
+    depends_on:
+      redpanda:
+        condition: service_healthy
+
+  # NDIC pushes to https://dexter.fit.vutbr.cz/infrastructure/ndic-closures/datex-in; dexter's nginx
+  # sends it to ndic-closures:8888 in the network kristyna-dev, hence the alias (the old container of
+  # that name must be stopped first). Every payload is archived in the volume ndic_archive.
+  ndic-closures:
+    <<: *java
+    container_name: analyticity-ndic-closures
+    image: ${REGISTRY:-dexter.fit.vutbr.cz/analyticity}/analyticity-ndic-closures:${IMAGE_TAG:-latest}
+    environment:
+      <<: *app-env
+      NDIC_USER: ${NDIC_USER}
+      NDIC_PASS: ${NDIC_PASS}
+      PORT: "8888"
+      NDIC_ARCHIVE_DIR: /data/ndic-archive
+    volumes:
+      - ndic_archive:/data/ndic-archive
+    healthcheck:
+      <<: *health
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8888/q/health/ready || exit 1"]
+    depends_on:
+      redpanda:
+        condition: service_healthy
+    networks:
+      data:
+      proxy:
+        aliases: [ndic-closures]
+
+  police-accidents-extractor:
+    <<: *java
+    # parses the yearly police archives (Excel files of ~40 MB) in memory; 512m thrashes and restarts
+    mem_limit: 2g
+    container_name: analyticity-police-accidents-extractor
+    image: ${REGISTRY:-dexter.fit.vutbr.cz/analyticity}/analyticity-police-accidents-extractor:${IMAGE_TAG:-latest}
+    environment:
+      <<: *app-env
+      POLICE_BASE_URL: https://policie.gov.cz/statistiky-dopravni-nehodovosti
+      POLICE_ARCHIVE_URL: https://archiv.policie.gov.cz/clanek/statistika-nehodovosti.aspx
+      POLICE_REGION: ${POLICE_REGION:-JHM}
+      POLICE_START_YEAR: ${POLICE_START_YEAR:-2016}
+      POLICE_FETCH_INTERVAL: 24h
+      PORT: "9999"
+    healthcheck:
+      <<: *health
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9999/q/health/ready || exit 1"]
+    depends_on:
+      db-migrate:
+        condition: service_completed_successfully
+      redpanda:
+        condition: service_healthy
+
+  accidents-transformer:
+    <<: *java
+    container_name: analyticity-accidents-transformer
+    image: ${REGISTRY:-dexter.fit.vutbr.cz/analyticity}/analyticity-accidents-transformer:${IMAGE_TAG:-latest}
+    environment:
+      <<: [*app-env, *bbox]
+      TOPIC_POLICE_ACCIDENTS: raw.police.accidents
+      TOPIC_WAZE_ALERTS: raw.waze.alerts
+      PORT: "9999"
+    healthcheck:
+      <<: *health
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9999/q/health/ready || exit 1"]
+    depends_on: &after-migrate
+      redpanda:
+        condition: service_healthy
+      db-migrate:
+        condition: service_completed_successfully
+
+  jams-transformer:
+    <<: *java
+    container_name: analyticity-jams-transformer
+    image: ${REGISTRY:-dexter.fit.vutbr.cz/analyticity}/analyticity-jams-transformer:${IMAGE_TAG:-latest}
+    environment:
+      <<: [*app-env, *bbox]
+      TOPIC_WAZE_JAMS: raw.waze.jams
+      TOPIC_WAZE_ALERTS: raw.waze.alerts
+      PORT: "9999"
+    healthcheck:
+      <<: *health
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9999/q/health/ready || exit 1"]
+    depends_on: *after-migrate
+
+  alerts-transformer:
+    <<: *java
+    container_name: analyticity-alerts-transformer
+    image: ${REGISTRY:-dexter.fit.vutbr.cz/analyticity}/analyticity-alerts-transformer:${IMAGE_TAG:-latest}
+    environment:
+      <<: [*app-env, *bbox]
+      TOPIC_WAZE_ALERTS: raw.waze.alerts
+      PORT: "9999"
+    healthcheck:
+      <<: *health
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9999/q/health/ready || exit 1"]
+    depends_on: *after-migrate
+
+  closures-transformer:
+    <<: *java
+    container_name: analyticity-closures-transformer
+    image: ${REGISTRY:-dexter.fit.vutbr.cz/analyticity}/analyticity-closures-transformer:${IMAGE_TAG:-latest}
+    environment:
+      <<: [*app-env, *bbox]
+      TOPIC_NDIC_CLOSURES: raw.ndic.closures
+      TOPIC_WAZE_ALERTS: raw.waze.alerts
+      PORT: "9999"
+    healthcheck:
+      <<: *health
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9999/q/health/ready || exit 1"]
+    depends_on: *after-migrate
+
+  event-linker:
+    <<: *java
+    container_name: analyticity-event-linker
+    image: ${REGISTRY:-dexter.fit.vutbr.cz/analyticity}/analyticity-event-linker:${IMAGE_TAG:-latest}
+    environment:
+      QUARKUS_DATASOURCE_DB_KIND: postgresql
+      QUARKUS_DATASOURCE_JDBC_URL: jdbc:postgresql://db:5432/${POSTGRES_DB}
+      QUARKUS_DATASOURCE_USERNAME: ${POSTGRES_USER}
+      QUARKUS_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
+      QUARKUS_OTEL_SDK_DISABLED: "true"
+      # 10s while it links the whole history after the migration, then 2m
+      LINKER_INTERVAL: ${LINKER_INTERVAL:-2m}
+      # first start on an empty event_linker_state: link history day by day from this date
+      LINKER_BACKFILL_FROM: ${LINKER_BACKFILL_FROM:-}
+      PORT: "9999"
+    healthcheck:
+      <<: *health
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9999/q/health/ready || exit 1"]
+    depends_on:
+      db-migrate:
+        condition: service_completed_successfully
+
+networks:
+  data:
+    name: analyticity-data
+  # dexter's shared network of the base nginx (NDIC push)
+  proxy:
+    name: kristyna-dev
+    external: true
+
+volumes:
+  db_data:
+  redpanda_data:
+  ndic_archive:

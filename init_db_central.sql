@@ -8,17 +8,21 @@ CREATE EXTENSION IF NOT EXISTS postgis;
 CREATE TABLE IF NOT EXISTS Towns (
   ID SERIAL PRIMARY KEY,
   Name TEXT UNIQUE NOT NULL,              -- napr. 'brno'
-  WazeLink TEXT NOT NULL,
-	UrlLink TEXT NOT NULL,
-  DBHost TEXT NOT NULL,                  -- docker host napr. 'db_brno'
-  DBPortExternal INTEGER NOT NULL,  -- port dostupný zvonku (napr. 5433)
-  DBPortInternal INTEGER NOT NULL DEFAULT 5432, -- port vnútri kontajnera (zvyčajne 5432)
-  DBName TEXT NOT NULL,
-  DBUser TEXT NOT NULL,
-  DBPassword TEXT NOT NULL,
+  WazeLink TEXT,                          -- nepoužíva sa (feed Waze je v .env pipeline), zrušiť
+	UrlLink TEXT,                           -- kam vedie karta mesta, ak mesto nebeží v tejto aplikácii
+  -- pripojenie k DB mesta sa nepoužíva (api ho berie z .env nasadenia), stĺpce DB* zrušiť
+  DBHost TEXT,
+  DBPortExternal INTEGER,
+  DBPortInternal INTEGER,
+  DBName TEXT,
+  DBUser TEXT,
+  DBPassword TEXT,
   Description TEXT,
-  Active BOOLEAN DEFAULT TRUE,
-  CoverageArea TEXT,            -- územie pokrytia (napr. Brno, JMK)
+  Active BOOLEAN DEFAULT TRUE,            -- nepoužíva sa, nahrádza ho Status; zrušiť
+  -- soon = na úvodnej stránke ako Pripravujeme, live = spustené, hidden = nezobrazí sa,
+  -- archived = archivované v administrácii (dá sa obnoviť alebo zmazať natrvalo)
+  Status TEXT NOT NULL DEFAULT 'live' CONSTRAINT towns_status_check CHECK (Status IN ('soon', 'live', 'hidden', 'archived')),
+  CoverageArea TEXT,            -- nepoužíva sa (oblasť je BBOX_* v .env pipeline), zrušiť
   CreatedAt TIMESTAMPTZ DEFAULT now(),
   UpdatedAt TIMESTAMPTZ DEFAULT now()
 );
@@ -47,13 +51,56 @@ CREATE TABLE IF NOT EXISTS Users (
   Active BOOLEAN DEFAULT TRUE,
   CreatedAt TIMESTAMPTZ DEFAULT now(),
   UpdatedAt TIMESTAMPTZ DEFAULT now(),
-  Town INTEGER
+  Town INTEGER,
+  -- raised on logout, password change and deactivation; older login tokens stop working
+  TokenVersion INTEGER NOT NULL DEFAULT 0,
+  LastLoginAt TIMESTAMPTZ
 );
 
 ALTER TABLE Users
 ADD CONSTRAINT fk_users_town
 FOREIGN KEY (Town) REFERENCES Towns(ID);
 
+-- Jednorazové odkazy na nastavenie hesla (pozvánka 7 dní, nové heslo 24 h); v DB len SHA-256
+CREATE TABLE IF NOT EXISTS PasswordTokens (
+  ID SERIAL PRIMARY KEY,
+  UserId INTEGER NOT NULL REFERENCES Users(ID) ON DELETE CASCADE,
+  TokenHash TEXT UNIQUE NOT NULL,
+  Purpose TEXT NOT NULL CHECK (Purpose IN ('invite', 'reset')),
+  CreatedAt TIMESTAMPTZ DEFAULT now(),
+  ExpiresAt TIMESTAMPTZ NOT NULL,
+  UsedAt TIMESTAMPTZ
+);
+
+-- Záznam zmien v administrácii (kto, kedy, čo); meno sa ukladá aj po zmazaní účtu
+CREATE TABLE IF NOT EXISTS AuditLog (
+  ID SERIAL PRIMARY KEY,
+  At TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UserId INTEGER,
+  UserName TEXT,
+  Action TEXT NOT NULL,
+  TargetType TEXT NOT NULL,
+  TargetName TEXT,
+  Details TEXT
+);
+CREATE INDEX IF NOT EXISTS auditlog_at ON AuditLog (At DESC);
+
+-- Osobné API kľúče (študenti, výskum); v DB je len SHA-256 kľúča
+CREATE TABLE IF NOT EXISTS ApiKeys (
+  ID SERIAL PRIMARY KEY,
+  KeyHash TEXT UNIQUE NOT NULL,
+  Prefix TEXT NOT NULL,
+  Owner TEXT NOT NULL,
+  Email TEXT NOT NULL,
+  Note TEXT,
+  CreatedAt TIMESTAMPTZ DEFAULT now(),
+  ExpiresAt TIMESTAMPTZ NOT NULL,
+  RevokedAt TIMESTAMPTZ,
+  LastUsedAt TIMESTAMPTZ,
+  CreatedBy INTEGER REFERENCES Users(ID) ON DELETE SET NULL
+);
+
+-- Nepoužíva sa: správca mesta má pevné práva podľa role (api modules/admin/router.py), zrušiť
 -- Tabuľka nastaveni ktore sa zobraznie pre mesta
 CREATE TABLE IF NOT EXISTS Show (
   ID SERIAL PRIMARY KEY,
@@ -81,23 +128,21 @@ FOREIGN KEY (Town) REFERENCES Towns(ID);
 ALTER TABLE Show
 ADD CONSTRAINT uq_show_town UNIQUE (Town);
 
-INSERT INTO Towns (Name, WazeLink, UrlLink, DBHost, DBPortExternal, DBPortInternal, DBName, DBUser, DBPassword, Description, CoverageArea)
+-- Mesto je register (názov, popis, odkaz, stav). Prihlasovacie údaje k DB a feed Waze sem nepatria:
+-- api berie DB z .env nasadenia, pipeline feed a oblasť z vlastného .env.
+INSERT INTO Towns (Name, UrlLink, Description, Status)
 VALUES
 (
   'Brno',
-  'https://www.waze.com/row-partnerhub-api/partners/16198912488/waze-feeds/9c8b4163-e3c2-436f-86b7-3db2058ce7a1?format=1',
   'https://dexter.fit.vutbr.cz/analyticity/brno/map',
-  'db_brno',
-  5432,
-  5432,
-  'traffic',
-  'traffic',
-  'brno_timescale_pass',
   '{"cz":"Jihomoravský kraj · druhé největší město Česka. Data pokrývají město i jeho blízké okolí.","en":"South Moravian Region · the second-largest city in Czechia. Data covers the city and its immediate surroundings."}',
-  '{
-    "p1": { "lng": 16.4, "lat": 49.1 },
-    "p2": { "lng": 16.8, "lat": 49.3 }
-  }'
+  'live'
+),
+(
+  'ORP Most',
+  NULL,
+  '{"cz":"Ústecký kraj · obec s rozšířenou působností","en":"Ústí nad Labem Region · municipality with extended powers"}',
+  'soon'
 )
 ON CONFLICT DO NOTHING;
 
@@ -642,3 +687,17 @@ VALUES
   1
 )
 ON CONFLICT DO NOTHING;
+-- ORP Most: modrá z mapového portálu mesta (opendata.mesto-most.cz); ostatné farby dedí
+INSERT INTO Settings (VarName, SettingName, Setting, Description, GroupName, Town)
+SELECT d.VarName, d.SettingName, '#0079C1', d.Description, d.GroupName, t.ID
+FROM Settings d, Towns t
+WHERE d.Town IS NULL AND d.VarName IN ('primary', 'sidebar-primary', 'accent') AND t.Name = 'ORP Most';
+
+-- Mesto dedí predvolené farby (Town IS NULL) a má riadok len pre farbu, ktorá sa líši
+-- (api modules/admin/router.py _town_settings). Kópie s rovnakou hodnotou zmaž.
+DELETE FROM Settings s
+USING Settings d
+WHERE s.Town IS NOT NULL
+  AND d.Town IS NULL
+  AND d.VarName = s.VarName
+  AND lower(trim(d.Setting)) = lower(trim(s.Setting));
