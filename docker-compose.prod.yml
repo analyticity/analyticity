@@ -1,5 +1,5 @@
 # ==========================================================
-# dexter.fit.vutbr.cz deploy — https://dexter.fit.vutbr.cz/analyticity/brno/
+# dexter.fit.vutbr.cz deploy — https://dexter.fit.vutbr.cz/analyticity/ (city chooser), Brno at /analyticity/brno/
 #
 # Four containers: central DB, api (everything the web calls: map, dashboards, case
 # studies, risky road sections, administration), web and the project proxy.
@@ -62,8 +62,9 @@ services:
     image: ${REGISTRY:-dexter.fit.vutbr.cz/analyticity}/analyticity-web:${IMAGE_TAG:-latest}
     restart: unless-stopped
     environment:
-      # Served under https://dexter.fit.vutbr.cz/analyticity/brno/ (rewritten into the build at start)
-      URL_BASE_PATH: /analyticity/brno
+      # Served under https://dexter.fit.vutbr.cz/analyticity/ (rewritten into the build at start): the city
+      # chooser at the root, the city pages at /analyticity/brno/…
+      URL_BASE_PATH: /analyticity
       VITE_API_BASE_URL: /analyticity/brno/api/v1
       # Sent as X-API-Key with every API call; the api lets this key reach only the web's endpoints
       VITE_API_KEY: ${WEB_API_KEY}
