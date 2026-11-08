@@ -158,6 +158,8 @@ services:
 
   police-accidents-extractor:
     <<: *java
+    # parses the yearly police archives (Excel files of ~40 MB) in memory; 512m thrashes and restarts
+    mem_limit: 2g
     container_name: analyticity-police-accidents-extractor
     image: ${REGISTRY:-dexter.fit.vutbr.cz/analyticity}/analyticity-police-accidents-extractor:${IMAGE_TAG:-latest}
     environment:
