@@ -130,9 +130,11 @@ services:
       redpanda:
         condition: service_healthy
 
-  # NDIC pushes to https://dexter.fit.vutbr.cz/infrastructure/ndic-closures/datex-in; dexter's nginx
-  # sends it to ndic-closures:8888 in the network kristyna-dev, hence the alias (the old container of
-  # that name must be stopped first). Every payload is archived in the volume ndic_archive.
+  # NDIC pushes to https://dexter.fit.vutbr.cz/infrastructure/ndic-closures/datex-in/<dataset>, one URL
+  # per subscription: traffic_info (Běžné dopravní informace), plain /datex-in (Uzavírky a omezení),
+  # weather, fcd (JMK and Ústecký kraj). dexter's nginx sends it to ndic-closures:8888 in the network
+  # kristyna-dev, hence the alias. Every payload is archived in the volume ndic_archive; only
+  # traffic_info and restrictions go to Kafka.
   ndic-closures:
     <<: *java
     container_name: analyticity-ndic-closures
@@ -187,6 +189,8 @@ services:
       <<: [*app-env, *bbox]
       TOPIC_POLICE_ACCIDENTS: raw.police.accidents
       TOPIC_WAZE_ALERTS: raw.waze.alerts
+      # NDIC accidents (the closures-transformer reads the same topic)
+      TOPIC_NDIC_CLOSURES: raw.ndic.closures
       PORT: "9999"
     healthcheck:
       <<: *health
