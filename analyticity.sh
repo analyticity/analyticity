@@ -9,6 +9,8 @@ DB_ENV="$ROOT/db/centralDbCreation/.env"
 DATA_COMPOSE="$ROOT/infrastructure/docker-compose.yml"
 DATA_COMPOSE_DIR="$ROOT/sources/data-pipeline/infrastructure/compose/dev"
 LOCAL_COMPOSE="$ROOT/local/docker-compose.yml"
+# Private docs repo, cloned next to this one
+DOCS_DIR="${DOCS_DIR:-$ROOT/../docs}"
 
 GITHUB_ORG="analyticity"
 # Repos with a main + deploy branch; a push to deploy builds the images
@@ -57,6 +59,9 @@ Usage: $(basename "$0") <command> [options]
     local:reset                  Stop and delete central DB data (re-seeded on next up)
     local:logs [service]         Tail logs
     local:status                 Show running containers
+
+  Documentation (private repo analyticity/docs, cloned next to this one as ../docs):
+    docs [port]                  Serve the docs site locally, default http://localhost:8000
 
   Releases (main → deploy on GitHub; the deploy push builds new images):
     release <repo>               Show what main has over deploy, merge after confirmation
@@ -409,6 +414,23 @@ cmd_local_reset()  { dc_local down -v; }
 cmd_local_logs()   { dc_local logs -f "$@"; }
 cmd_local_status() { dc_local ps; }
 
+# ── documentation ─────────────────────────────────────────────────────────────
+
+cmd_docs() {
+  local port="${1:-8000}"
+  if [[ ! -x "$DOCS_DIR/serve.sh" ]]; then
+    echo "ERROR: docs not found in $DOCS_DIR"
+    echo "Clone them next to this repo:  git clone git@github.com:$GITHUB_ORG/docs.git \"$ROOT/../docs\""
+    echo "or point DOCS_DIR at your clone."
+    exit 1
+  fi
+  if _port_in_use "$port"; then
+    echo "ERROR: port $port is already in use — try: $(basename "$0") docs 8001"
+    exit 1
+  fi
+  exec "$DOCS_DIR/serve.sh" "$port"
+}
+
 # ── releases ──────────────────────────────────────────────────────────────────
 
 cmd_release() {
@@ -468,6 +490,7 @@ case "$COMMAND" in
   local:reset)  cmd_local_reset ;;
   local:logs)   cmd_local_logs "$@" ;;
   local:status) cmd_local_status ;;
+  docs)       cmd_docs "${1:-}" ;;
   release)    cmd_release "${1:-}" ;;
   start|restart|update)
     TARGET="${1:---all}"; PROFILE="${2:-}"
