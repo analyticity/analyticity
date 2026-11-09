@@ -71,6 +71,8 @@ services:
       VITE_APP_CENTER_LON: ${VITE_APP_CENTER_LON:-16.6}
       VITE_APP_CENTER_LAT: ${VITE_APP_CENTER_LAT:-49.2}
       VITE_APP_CITY: ${VITE_APP_CITY:-Brno}
+      # map tiles through the cache in nginx.conf (same OSM France HOT tiles)
+      VITE_MAP_TILE_URL: /analyticity/tiles/hot/{z}/{x}/{y}.png
     networks:
       - analyticityNetwork
 
@@ -80,6 +82,9 @@ services:
     restart: unless-stopped
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      # map tile cache (nginx.conf proxy_cache_path); the image's /var/cache/nginx belongs to the
+      # nginx user, a new named volume takes that owner over
+      - tile_cache:/var/cache/nginx
     depends_on:
       - api
       - web
@@ -105,3 +110,4 @@ networks:
 
 volumes:
   db_central_data:
+  tile_cache:
