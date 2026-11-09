@@ -1,458 +1,183 @@
-# Analyticity — Central Deployment Repository
+# Analyticity
 
-Operačné repo pre platformu Analyticity. **Neobsahuje zdrojový kód** — prepája ostatné repozitáre a riadi nasadenie miest cez Docker Compose.
+Webová aplikácia na analýzu dopravy v meste. Spája zápchy a hlásenia z Waze for Cities, nehody
+z evidencie Polície ČR a uzávierky z NDIC (ŘSD ČR), premieta ich na cestnú sieť z OpenStreetMap a
+hľadá medzi nimi súvislosti (nehoda → zápcha). Ukazuje ich na mape, v dashboardoch a v
+prípadových štúdiách. Vyvíja sa na FIT VUT v Brne.
 
----
+**Naživo:** <https://dexter.fit.vutbr.cz/analyticity/brno/>
 
-## Čo je Analyticity?
+Toto je zastrešujúce repo: neobsahuje zdrojový kód aplikácie, ale skladá ju z ostatných
+repozitárov (git submoduly), spúšťa ju lokálne a nasadzuje na server.
 
-Platforma na zber, spracovanie a vizualizáciu dopravných dát (nehody, dopravné zápchy, uzávierky) pre slovenské a české mestá. Každé mesto beží ako samostatná sada Docker kontajnerov a má vlastnú databázu.
+## Ako to do seba zapadá
 
----
-
-## Architektúra
-
-```
-                        PREHLIADAC
-                    http://localhost:80
-                           |
-                           v
-         +---------------------------------------+
-         |  web  (React / Vite, nginx)           |
-         |  Webova mapa s dopravnymi udalostami   |
-         +-------------------+-------------------+
-                             |  /api/v1  (X-API-Key)
-         +-------------------+-------------------+      +------------------+
-         |  api (FastAPI)  port 8000             |----->|  centralna DB    |
-         |  mapa, dashboardy, case studies,      |      |  mesta, pouziva- |
-         |  rizikove useky (ML), administracia   |      |  telia, nastav.  |
-         +-------------------+-------------------+      +------------------+
-                             |
-                             v
-      +-------------------------------------------------------------------+
-      |           postgres-timescale  (TimescaleDB + PostGIS)             |
-      |           mestska DB -- nehody, zapchy, uzavierky, OSM            |
-      +-------------------------------------------------------------------+
-               ^                       ^
-               |         Kafka         |
-      +-------------------------------------------------------------------+
-      |                      redpanda  (Kafka)                            |
-      +----+------------------------------+-------------------------------+
-           |                              |
-           v                              v
-      +---------+    +----------------------------------------------+
-      | waze-   |    |  transformery (Quarkus)                      |
-      | feed    |    |  jams / alerts / accidents / closures        |
-      +---------+    |  + event-linker                              |
-           ^         +----------------------------------------------+
-           |                              ^
-      +-----------+           +-----------+--------+
-      | police-   |           |  ndic-closures     |
-      | accidents |           |  (NDIC API)        |
-      +-----------+           +--------------------+
-
-  Zdielane pre vsetky mesta (bezi raz):
-      +-------------------------------------------------------------------+
-      |  db_central  (PostGIS)  -- pouzivatelia, admin data               |
-      +-------------------------------------------------------------------+
+```mermaid
+flowchart LR
+    subgraph zdroje[Zdroje]
+        W[Waze for Cities]
+        N[NDIC / ŘSD]
+        P[Polícia ČR]
+        O[OpenStreetMap]
+    end
+    subgraph data["Dátový stack mesta (data-pipeline)"]
+        X[extraktory] --> K[(Kafka<br/>Redpanda)] --> T[transformátory] --> DB[(DB mesta<br/>TimescaleDB + PostGIS)]
+        DB --> L[event-linker] --> DB
+    end
+    subgraph app[Aplikácia]
+        A[api<br/>FastAPI] --> UI[web<br/>React]
+        C[(centrálna DB<br/>mestá, používatelia)] --> A
+    end
+    W & N & P --> X
+    O --> DB
+    DB --> A
 ```
 
-**Tok dát:**
-1. `waze-feed` / `police-accidents` / `ndic-closures` sťahujú surové dáta a posielajú ich do Kafka tém
-2. Transformery konzumujú Kafka témy, normalizujú dáta a zapisujú do `postgres-timescale`
-3. `event-linker` prepája nehody so zápchovými udalosťami
-4. `api` číta z DB a servuje REST endpointy (aj rizikové úseky a administráciu)
-5. `web` zobrazuje dáta na mape a v dashboardoch
+- **Každé mesto má vlastnú DB** s dátami; centrálna DB je spoločná (mestá, používatelia,
+  nastavenia, osobné API kľúče).
+- **Jedno `api`** slúži mapu, dashboardy, prípadové štúdie, rizikové úseky, surové tabuľky aj
+  administráciu pod `/api/v1`, vždy s hlavičkou `X-API-Key`.
+- **`web`** je jeden image pre všetky mestá; mesto, stred mapy a adresu API dostane pri štarte
+  kontajnera (`config.js`).
 
----
+## Repozitáre
 
-## Štruktúra repozitára
+| Repo | Obsah | Tu ako |
+|---|---|---|
+| [`api`](https://github.com/analyticity/api) | backend (FastAPI) | `sources/backend` |
+| [`web`](https://github.com/analyticity/web) | frontend (React, TypeScript, Vite, Leaflet) | `sources/ui` |
+| [`data-pipeline`](https://github.com/analyticity/data-pipeline) | extraktory, transformátory, event-linker, migrácie DB mesta (Java, Quarkus) | `sources/data-pipeline` |
+| [`central_analyticity_db`](https://github.com/analyticity/central_analyticity_db) | centrálna DB | `db` |
+| [`simulations`](https://github.com/analyticity/simulations) | dopravný model mesta (AequilibraE) | – |
 
-```
-analyticity/
-├── analyticity.sh              # hlavný riadiaci skript
-├── README.md
-│
-├── cities/                     # konfigurácia jednotlivých miest
-│   ├── brno/
-│   │   ├── docker-compose.yml  # compose pre Brno (include: infraštruktúra + app services)
-│   │   ├── .env.example        # šablóna — čo treba vyplniť
-│   │   └── .env                # ← GITIGNORED, nikdy necommituj (heslá, porty)
-│   └── orp_most/
-│       ├── docker-compose.yml
-│       ├── .env.example
-│       └── .env
-│
-├── templates/                  # šablóna pre nové mestá (./analyticity.sh setup <mesto>)
-│   ├── docker-compose.yml
-│   └── .env.example
-│
-├── db/                         # submodule: centrálna DB (zdieľaná)
-│   └── centralDbCreation/
-│       ├── docker-compose.yml
-│       └── .env                # ← GITIGNORED
-│
-├── local/                      # lokálne spustenie na vývoj (./analyticity.sh local:up)
-│   └── docker-compose.yml
-│
-└── sources/                    # submoduly — zdrojový kód (nerob tu zmeny priamo)
-    ├── backend/                # analyticity/api — jedno API (mapa, rizikové úseky, administrácia)
-    ├── ui/                     # analyticity/web — web (React)
-    └── data-pipeline/          # analyticity/data-pipeline
-        ├── infrastructure/     # docker-compose pre TimescaleDB + Redpanda
-        ├── db_migrate/         # Flyway migrácie + OSM import
-        ├── waze/  ndic_closures/  police_accidents_extractor/
-        ├── jams_transformers/  alerts_transformator/  closures-transformer/  accidents-transformer/
-        └── event_linker/
-```
+Submoduly sledujú vetvu `deploy` daného repa, teda to, čo beží na serveri. `api`, `web`,
+`data-pipeline` a `central_analyticity_db` sú súkromné; ľudia na projekte majú k dispozícii aj
+internú dokumentáciu (repo `docs`, `./analyticity.sh docs`).
 
----
+## Rýchly štart
 
-## Lokálne spustenie (vývoj a testovanie)
-
-Spustí aplikáciu na vlastnom počítači bez Kafky, TimescaleDB a extraktorov: centrálna DB, `api` nad vzorovými dátami (rizikové úseky nad CSV) a web. Images sa buildia zo zdrojákov, prístup do ghcr.io netreba.
-
-Potrebuješ Docker Desktop. Na Apple Silicon sa Python backendy buildia pre `linux/amd64` (ako v CI), prvý build preto trvá niekoľko minút.
-
-```bash
-# Zo submodulov (verzie z vetiev deploy)
-git submodule update --init
-./analyticity.sh local:up
-
-# Alebo z vlastných klonov vedľa analyticity/ (../api, ../web, ../central_analyticity_db)
-# — na vyskúšanie rozpracovaných zmien
-./analyticity.sh local:up --workspace
-```
-
-| Služba | URL |
-|--------|-----|
-| Web | http://localhost:8090 |
-| API (Swagger) | http://localhost:8091/docs |
-| Traffic Jams Backend | http://localhost:8092/docs |
-| Admin Backend | http://localhost:8093/docs |
-| Centrálna DB | `localhost:5439`, `db` / `local`, databáza `central_db` |
-
-Porty sa dajú zmeniť, napr. `LOCAL_UI_PORT=9090 ./analyticity.sh local:up`. Prihlásenie do administrácie: `VutAdmin` / `Test` (zo seed dát centrálnej DB).
-
-```bash
-./analyticity.sh local:logs web     # logy jednej služby
-./analyticity.sh local:status
-./analyticity.sh local:down         # zastaví (dáta centrálnej DB ostanú)
-./analyticity.sh local:reset        # zmaže dáta — pri ďalšom up sa DB znova naplní zo seedu
-```
-
-Po zmene kódu stačí znova `local:up` (prebuilduje zmenené images).
-
----
-
-## Prvé spustenie od nuly (krok za krokom)
-
-### Čo potrebuješ nainštalovaný
-
-- [Docker Desktop](https://www.docker.com/products/docker-desktop/) (alebo Docker Engine na Linuxe)
-- Git
-- Prístup do GitHub Container Registry (`ghcr.io/analyticity`) — potrebuješ Personal Access Token
-
-### 1. Stiahni repozitár
+Aplikácia na vlastnom počítači so vzorovými dátami: centrálna DB, `api` a `web`, bez Kafky a
+extraktorov. Potrebuješ Docker Desktop.
 
 ```bash
 git clone --recurse-submodules git@github.com:analyticity/analyticity.git
 cd analyticity
+./analyticity.sh local:up               # zo submodulov (vetvy deploy)
+./analyticity.sh local:up --workspace   # z tvojich klonov ../api, ../web, ../central_analyticity_db
 ```
 
-> Ak si zabudol `--recurse-submodules`, dobehnúť to môžeš:
-> ```bash
-> git submodule update --init --recursive
-> ```
-
-### 2. Posuň submoduly na aktuálnu verziu
-
-```bash
-./analyticity.sh sync
-```
-
-### 3. Vytvor zdieľanú Docker sieť (raz na celý počítač/server)
-
-```bash
-docker network create analyticity-network
-```
-
-### 4. Prihlás sa do GitHub Container Registry
-
-```bash
-echo "<PERSONAL_ACCESS_TOKEN>" | docker login ghcr.io -u <github-username> --password-stdin
-```
-
-Token potrebuje scope `read:packages`.
-
-### 5. Spusti centrálnu DB (raz na celý server, beží stále)
-
-```bash
-# Skopíruj a vyplň .env pre centrálnu DB
-cp db/centralDbCreation/.env.example db/centralDbCreation/.env
-# Uprav db/centralDbCreation/.env — nastav heslá
-
-./analyticity.sh db:start
-```
-
-### 6. Priprav konfiguráciu pre mesto
-
-```bash
-# Pre existujúce mestá — skopíruj .env.example do .env a vyplň
-cp cities/brno/.env.example cities/brno/.env
-# Uprav cities/brno/.env — nastav heslá, BBOX, VITE_APP_* premenné
-```
-
-> **Pre nové mesto** použi `setup` príkaz:
-> ```bash
-> ./analyticity.sh setup orp_liberec
-> # Potom vyplň cities/orp_liberec/.env
-> ```
-
-### 7. Skontroluj portové konflikty
-
-```bash
-./analyticity.sh ports brno
-```
-
-Ak beží viac miest na jednom počítači, každé musí mať iné porty (nastav v `.env`).
-
-### 8. Stiahni images a spusti
-
-```bash
-./analyticity.sh pull brno
-./analyticity.sh start brno
-```
-
-> **Prvé spustenie trvá 10–30 minút** — `db-migrate` importuje OpenStreetMap dáta.
-> API medzitým beží a servuje ukážkové dáta. Keď je DB pripravená, automaticky prepne.
-
----
-
-## Čo vyplniť v `.env` pri novom meste
-
-Skopíruj `templates/.env.example` do `cities/<mesto>/.env` a vyplň:
-
-| Premenná | Popis | Príklad |
-|----------|-------|---------|
-| `API_PORT`, `UI_PORT`, ... | Porty dostupné z prehliadača — musia byť unikátne pre každé mesto | Brno: 80/8000, Most: 8100/8101 |
-| `POSTGRES_PASSWORD` | Heslo pre mestskú TimescaleDB | `brno_timescale_pass` |
-| `DB_CENTRAL_PASSWORD` | Heslo pre zdieľanú centrálnu DB | rovnaká vo všetkých mestách |
-| `SECRET_KEY` | JWT kľúč pre admin backend — generuj: `openssl rand -hex 64` | |
-| `WAZE_URL` | URL Waze Partner Hub feeder-u pre dané mesto | |
-| `POLICE_REGION` | Skratka kraja pre políciu | `JHM`, `ULK`, ... |
-| `BBOX_MIN_LON/LAT`, `BBOX_MAX_LON/LAT` | Geografický bounding box mesta | |
-| `VITE_APP_CENTER_LON` | Stred mapy = `(BBOX_MIN_LON + BBOX_MAX_LON) / 2` | `16.6` pre Brno |
-| `VITE_APP_CENTER_LAT` | Stred mapy = `(BBOX_MIN_LAT + BBOX_MAX_LAT) / 2` | `49.2` pre Brno |
-| `VITE_APP_CITY` | Názov mesta zobrazený v UI | `Brno`, `ORP Most` |
-
-### Predpripravené hodnoty pre existujúce mestá
-
-**Brno**
-```
-BBOX_MIN_LON=16.4
-BBOX_MIN_LAT=49.1
-BBOX_MAX_LON=16.8
-BBOX_MAX_LAT=49.3
-OSM_BBOX=16.4,49.1,16.8,49.3
-VITE_APP_CENTER_LON=16.6
-VITE_APP_CENTER_LAT=49.2
-VITE_APP_CITY=Brno
-```
-
-**ORP Most**
-```
-BBOX_MIN_LON=13.35
-BBOX_MIN_LAT=50.43
-BBOX_MAX_LON=13.82
-BBOX_MAX_LAT=50.68
-OSM_BBOX=13.35,50.43,13.82,50.68
-VITE_APP_CENTER_LON=13.585
-VITE_APP_CENTER_LAT=50.555
-VITE_APP_CITY=ORP Most
-```
-
----
-
-## Viac miest na jednom serveri
-
-Každé mesto musí mať **unikátne porty** — nastav ich v `cities/<mesto>/.env`:
-
-| | Brno (default) | ORP Most |
-|--|--|--|
-| UI | 80 | 8100 |
-| API | 8000 | 8101 |
-| postgres-timescale | 5432 | 5532 |
-| Redpanda (Kafka ext) | 19092 | 19192 |
-
-Pred spustením vždy skontroluj: `./analyticity.sh ports <mesto>`
-
----
-
-## Vydanie novej verzie
-
-Každé repo má vetvu `main` (vývoj) a `deploy` (čo sa nasadzuje). Push do `deploy` zbuilduje nové images v GitHub Actions.
-
-```bash
-# 1. Ukáže commity z main, ktoré ešte nie sú v deploy, a po potvrdení ich zmerguje
-./analyticity.sh release web      # alebo: api, central_analyticity_db, data-pipeline, simulations
-
-# 2. Po dobehnutí buildu (odkaz vypíše príkaz) nasaď novú verziu
-./analyticity.sh deploy brno web
-```
-
-| Repo | Služby (images) |
-|------|-----------------|
-| `api` | `api` |
-| `web` | `web` |
-| `central_analyticity_db` | `central-analyticity-db` |
-
-`release` potrebuje [GitHub CLI](https://cli.github.com/) prihlásené cez `gh auth login`.
-
----
-
-## Bežné operácie
-
-```bash
-# Nasadiť novú verziu jednej služby (napr. po update UI)
-./analyticity.sh deploy brno web
-./analyticity.sh deploy brno api
-
-# Nasadiť všetky služby mesta
-./analyticity.sh pull brno && ./analyticity.sh restart brno
-
-# Nasadiť do všetkých miest naraz
-./analyticity.sh update --all
-
-# Logy konkrétnej služby
-./analyticity.sh logs brno api
-./analyticity.sh logs brno db-migrate    # sleduj OSM import (prvé spustenie)
-./analyticity.sh logs brno waze-feed
-
-# Stav kontajnerov
-./analyticity.sh status brno
-
-# Zastav mesto (dáta zostanú zachované)
-./analyticity.sh stop brno
-
-# RESET mesta — ZMAŽE VŠETKY DÁTA
-docker compose --project-name analyticity-brno --profile all down -v
-./analyticity.sh start brno
-```
-
----
-
-## analyticity.sh — všetky príkazy
-
-```
-./analyticity.sh <command> [options]
-
-  Mestá:
-    list                           Zoznam nakonfigurovaných miest
-    setup   <mesto>                Vytvor nové mesto zo šablóny
-    ports   <mesto>                Skontroluj portové konflikty pred štartom
-    start   <mesto|--all> [profil] Spusti (kontroluje porty, default profil: all)
-    stop    <mesto|--all>          Zastav (dáta zachované)
-    restart <mesto|--all> [profil] Reštartuj
-    pull    <mesto|--all>          Stiahni najnovšie Docker images
-    update  <mesto|--all>          Pull + restart
-    deploy  <mesto> <služba>       Pull + reštart jednej služby (napr. api, web)
-    logs    <mesto> [služba]       Logy (voliteľne iba jednej služby)
-    status  <mesto|--all>          Bežiace kontajnery
-    sync                           Posuň všetky submoduly na latest
-
-  Centrálna DB:
-    db:start                       Spusti centrálnu DB + pgAdmin
-    db:stop                        Zastav centrálnu DB
-    db:restart                     Reštartuj centrálnu DB
-    db:logs                        Logy centrálnej DB
-    db:status                      Stav centrálnej DB
-
-  Lokálne (vývoj):
-    local:up [--workspace]         Zbuilduj a spusti centrálnu DB, backendy a web
-    local:down                     Zastav (dáta centrálnej DB ostanú)
-    local:reset                    Zastav a zmaž dáta centrálnej DB
-    local:logs [služba]            Logy
-    local:status                   Bežiace kontajnery
-
-  Vydania:
-    release <repo>                 main → deploy na GitHube (spustí build images)
-```
-
-### Profily (pre start/restart)
-
-| Profil | Čo spustí |
-|--------|-----------|
-| `all` *(default)* | všetko |
-| `tools` | + pgAdmin (5050), Redpanda Console (8080) |
-| `extract` | + waze-feed, ndic-closures, police-accidents |
-| `transform` | + db-migrate, transformery, event-linker |
-| `apps` | extract + transform |
-| `mon` | + otel-collector, jaeger, prometheus, grafana |
-
----
-
-## Prístupy k službám — Brno
-
-### Aplikácia
-
-| Služba | URL |
-|--------|-----|
-| Webová aplikácia | http://localhost |
-| API (Swagger) | http://localhost:8000/docs |
-
-### Nástroje (profil `tools`)
-
-| Služba | URL | Prihlásenie |
-|--------|-----|-------------|
-| pgAdmin (mestská DB) | http://localhost:5050 | `admin@admin.com` / `admin` |
-| Redpanda Console | http://localhost:8080 | — |
-| pgAdmin (centrálna DB) | http://localhost:5051 | `admin@admin.com` / `admin` |
-
-### Priame pripojenie k DB (napr. DBeaver)
-
-**Mestská TimescaleDB:**
 | | |
-|-|-|
-| Host | `localhost` |
-| Port | `5432` |
-| Database | `traffic` |
-| Username | `traffic` |
-| Password | z `cities/brno/.env` → `POSTGRES_PASSWORD` |
+|---|---|
+| Web | <http://localhost:8090> |
+| API (Swagger) | <http://localhost:8091/docs>, kľúč `dev-full-key` (web používa `dev-local-key`) |
+| Administrácia | `VutAdmin` / `Test` (len lokálne, zo seedu centrálnej DB) |
+| Centrálna DB | `localhost:5439`, `db` / `local`, databáza `central_db` |
 
-**Centrálna DB:**
-| | |
-|-|-|
-| Host | `localhost` |
-| Port | `5431` |
-| Database | `central_db` |
-| Username | `db` |
-| Password | z `db/centralDbCreation/.env` |
+Prvý build trvá niekoľko minút (na Apple Silicon sa images buildia pre `linux/amd64`). Po zmene
+kódu stačí znova `local:up`. Porty sa dajú zmeniť, napr. `LOCAL_UI_PORT=9090 ./analyticity.sh local:up`.
 
-### Monitoring (profil `mon`)
+```bash
+./analyticity.sh local:logs api     # logy
+./analyticity.sh local:down         # zastaví, dáta centrálnej DB ostanú
+./analyticity.sh local:reset        # zmaže centrálnu DB, pri ďalšom up sa naplní zo seedu
+```
 
-| Služba | URL |
-|--------|-----|
-| Grafana | http://localhost:3000 (`admin`/`admin`) |
-| Prometheus | http://localhost:9090 |
-| Jaeger | http://localhost:16686 |
+## Nasadenie
 
----
+Repo pozná dva spôsoby nasadenia. Navzájom sa nemiešajú.
 
-## Submoduly
+| | Server dexter (produkcia) | Samostatný stack mesta |
+|---|---|---|
+| Súbory | `docker-compose.prod.yml` (centrálna DB, api, web, proxy), `docker-compose.data.yml` (dátový stack Brna), `nginx.conf`, `docker-compose.build.yml` | `cities/<mesto>/docker-compose.yml`, `infrastructure/docker-compose.yml`, `templates/` |
+| Images | registry dexteru `dexter.fit.vutbr.cz/analyticity/analyticity-*`, build lokálne z vetiev `deploy` | `api` a `web` z `ghcr.io/analyticity` (GitHub Actions); dátové služby zatiaľ zo starších `ghcr.io/dp-traffic/*` v `infrastructure/docker-compose.yml` |
+| Konfigurácia | `.env.example`, `.env.data.example` | `cities/<mesto>/.env.example` |
+| Príkazy | `./dexter.sh` z repa servera (`build`, `push`, `remote-sync`, `remote-start`) | `./analyticity.sh setup`, `start`, `deploy`, `update` |
 
-| Cesta | Repozitár | Vetva |
-|-------|-----------|-------|
-| `db/` | `analyticity/central_analyticity_db` | `deploy` |
-| `sources/backend/` | `analyticity/api` | `deploy` |
-| `sources/ui/` | `analyticity/web` | `deploy` |
-| `sources/data-pipeline/` | `analyticity/data-pipeline` | `deploy` |
+```mermaid
+flowchart LR
+    B[vetva z main] --> PR[PR do main] --> REL["./analyticity.sh release REPO<br/>main → deploy"]
+    REL --> IMG[images z vetvy deploy]
+    IMG --> DEX["dexter: docker-compose.prod.yml<br/>a docker-compose.data.yml"]
+    IMG --> CITY["samostatný stack:<br/>./analyticity.sh deploy MESTO SLUŽBA"]
+```
 
-Images extraktorov a transformerov (`ghcr.io/dp-traffic/*`) sa zatiaľ stále buildia v pôvodných repozitároch DP-Traffic — CI workflowy v `data-pipeline` sú v podadresároch, kde ich GitHub nespúšťa.
+Images sa buildia **iba z vetvy `deploy`**; `main` sa najprv overí (lokálne alebo cez
+`local:up --workspace`) a až potom vydá príkazom `release` (potrebuje prihlásené
+[GitHub CLI](https://cli.github.com/)).
 
-Na serveri po prechode z DP-Traffic submodulov: `git pull && git submodule sync && git submodule update --init`.
+> **Dátový stack nikdy `down -v`.** DB mesta drží históriu Waze, ktorú Waze znova neposkytne.
+> `db-migrate` s `RUN_OSM_IMPORT=true` naimportuje cestnú sieť nanovo s novými `id` úsekov.
 
-## License
+### Samostatný stack mesta v skratke
+
+```bash
+docker network create analyticity-network            # raz na server
+cp db/centralDbCreation/.env.example db/centralDbCreation/.env && ./analyticity.sh db:start
+./analyticity.sh setup orp_liberec                    # cities/orp_liberec/ zo šablóny, vyplň .env
+./analyticity.sh ports orp_liberec                    # konflikty portov
+./analyticity.sh start orp_liberec                    # prvé spustenie 10–30 min (import OSM)
+```
+
+V `.env` mesta: jedinečné porty, `WAZE_URL`, `POLICE_REGION`, `BBOX_*` a `OSM_BBOX`, stred mapy
+a názov (`VITE_APP_*`), heslá DB, `SECRET_KEY` (`openssl rand -hex 64`), `API_KEYS` a
+`WEB_API_KEY` (`openssl rand -hex 32`, dva rôzne). DB mesta je `POSTGRES_HOST_BRNO=postgres-timescale`;
+prípona `_BRNO` je historická a platí pre každé mesto.
+
+## `analyticity.sh`
+
+```text
+Mestá (samostatné stacky)
+  list | setup <mesto> | ports <mesto>
+  start | restart <mesto|--all> [profil]     profily: tools, extract, transform, apps, mon, all
+  stop | pull | status <mesto|--all>
+  update <mesto|--all>                       pull + restart
+  deploy <mesto> <služba>                    pull + nové spustenie jednej služby
+  logs <mesto> [služba] | topics <mesto> | sync
+
+Centrálna DB
+  db:start | db:stop | db:restart | db:logs | db:status
+
+Lokálne
+  local:up [--workspace] | local:down | local:reset | local:logs [služba] | local:status
+
+Dokumentácia
+  docs [port]                                interná dokumentácia (repo docs vedľa tohto)
+
+Vydania
+  release <repo>                             api, web, central_analyticity_db, data-pipeline, simulations
+```
+
+`./analyticity.sh` bez argumentu vypíše úplný zoznam s príkladmi.
+
+## Štruktúra
+
+```text
+analyticity/
+├── analyticity.sh               riadiaci skript
+├── docker-compose.prod.yml      dexter: centrálna DB, api, web, proxy
+├── docker-compose.data.yml      dexter: dátový stack Brna
+├── docker-compose.build.yml     build a push images do registry dexteru
+├── nginx.conf                   proxy projektu na dexteri (rozcestník miest, /brno/)
+├── init_db_central.sql          seed centrálnej DB pre dexter (configure/sync-data)
+├── .env.example, .env.data.example
+├── local/                       lokálny stack (local:up)
+├── cities/<mesto>/              samostatné stacky miest (brno, orp_most, praha)
+├── templates/                   šablóna nového mesta (setup)
+├── infrastructure/              infra compose pre samostatné stacky (TimescaleDB, Redpanda, služby)
+├── db/                          submodul central_analyticity_db
+└── sources/                     submoduly api (backend), web (ui), data-pipeline
+```
+
+Do `sources/` a `db/` sa zmeny nerobia; patria do príslušného repa. `.env` súbory sú v
+`.gitignore` a do gitu nepatria nikdy.
+
+## Dáta a ich podmienky
+
+Dáta Waze for Cities sa nesmú zverejňovať, preto ich verejné časti aplikácie ukazujú len
+agregované. Každý pohľad s dátami uvádza zdroje: Waze for Cities, Polícia ČR, NDIC (ŘSD ČR),
+© prispievatelia OpenStreetMap.
+
+## Licencia
 
 Copyright (C) 2026 Magdaléna Ondrušková
 
@@ -469,6 +194,3 @@ over a network — for example by running your own instance of
 the dashboard or API — you must offer those users the complete
 corresponding source code of your modified version, under the
 same license.
-
-If you use this software in academic work, please cite it — see
-[CITATION.cff](CITATION.cff).
