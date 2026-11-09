@@ -82,72 +82,17 @@ kódu stačí znova `local:up`. Porty sa dajú zmeniť, napr. `LOCAL_UI_PORT=909
 ./analyticity.sh local:reset        # zmaže centrálnu DB, pri ďalšom up sa naplní zo seedu
 ```
 
-## Nasadenie
-
-Repo pozná dva spôsoby nasadenia. Navzájom sa nemiešajú.
-
-| | Server dexter (produkcia) | Samostatný stack mesta |
-|---|---|---|
-| Súbory | `docker-compose.prod.yml` (centrálna DB, api, web, proxy), `docker-compose.data.yml` (dátový stack Brna), `nginx.conf`, `docker-compose.build.yml` | `cities/<mesto>/docker-compose.yml`, `infrastructure/docker-compose.yml`, `templates/` |
-| Images | registry dexteru `dexter.fit.vutbr.cz/analyticity/analyticity-*`, build lokálne z vetiev `deploy` | `api` a `web` z `ghcr.io/analyticity` (GitHub Actions); dátové služby zatiaľ zo starších `ghcr.io/dp-traffic/*` v `infrastructure/docker-compose.yml` |
-| Konfigurácia | `.env.example`, `.env.data.example` | `cities/<mesto>/.env.example` |
-| Príkazy | `./dexter.sh` z repa servera (`build`, `push`, `remote-sync`, `remote-start`) | `./analyticity.sh setup`, `start`, `deploy`, `update` |
-
-```mermaid
-flowchart LR
-    B[vetva z main] --> PR[PR do main] --> REL["./analyticity.sh release REPO<br/>main → deploy"]
-    REL --> IMG[images z vetvy deploy]
-    IMG --> DEX["dexter: docker-compose.prod.yml<br/>a docker-compose.data.yml"]
-    IMG --> CITY["samostatný stack:<br/>./analyticity.sh deploy MESTO SLUŽBA"]
-```
-
-Images sa buildia **iba z vetvy `deploy`**; `main` sa najprv overí (lokálne alebo cez
-`local:up --workspace`) a až potom vydá príkazom `release` (potrebuje prihlásené
-[GitHub CLI](https://cli.github.com/)).
-
-> **Dátový stack nikdy `down -v`.** DB mesta drží históriu Waze, ktorú Waze znova neposkytne.
-> `db-migrate` s `RUN_OSM_IMPORT=true` naimportuje cestnú sieť nanovo s novými `id` úsekov.
-
-### Samostatný stack mesta v skratke
-
-```bash
-docker network create analyticity-network            # raz na server
-cp db/centralDbCreation/.env.example db/centralDbCreation/.env && ./analyticity.sh db:start
-./analyticity.sh setup orp_liberec                    # cities/orp_liberec/ zo šablóny, vyplň .env
-./analyticity.sh ports orp_liberec                    # konflikty portov
-./analyticity.sh start orp_liberec                    # prvé spustenie 10–30 min (import OSM)
-```
-
-V `.env` mesta: jedinečné porty, `WAZE_URL`, `POLICE_REGION`, `BBOX_*` a `OSM_BBOX`, stred mapy
-a názov (`VITE_APP_*`), heslá DB, `SECRET_KEY` (`openssl rand -hex 64`), `API_KEYS` a
-`WEB_API_KEY` (`openssl rand -hex 32`, dva rôzne). DB mesta je `POSTGRES_HOST_BRNO=postgres-timescale`;
-prípona `_BRNO` je historická a platí pre každé mesto.
-
-## `analyticity.sh`
+## Príkazy pre vývoj
 
 ```text
-Mestá (samostatné stacky)
-  list | setup <mesto> | ports <mesto>
-  start | restart <mesto|--all> [profil]     profily: tools, extract, transform, apps, mon, all
-  stop | pull | status <mesto|--all>
-  update <mesto|--all>                       pull + restart
-  deploy <mesto> <služba>                    pull + nové spustenie jednej služby
-  logs <mesto> [služba] | topics <mesto> | sync
-
-Centrálna DB
-  db:start | db:stop | db:restart | db:logs | db:status
-
-Lokálne
-  local:up [--workspace] | local:down | local:reset | local:logs [služba] | local:status
-
-Dokumentácia
-  docs [port]                                interná dokumentácia (repo docs vedľa tohto)
-
-Vydania
-  release <repo>                             api, web, central_analyticity_db, data-pipeline, simulations
+local:up [--workspace]      aplikácia lokálne (vzorové dáta), zo submodulov alebo z tvojich klonov
+local:down | local:reset | local:logs [služba] | local:status
+docs [port]                 interná dokumentácia (repo docs vedľa tohto), http://localhost:8000
 ```
 
-`./analyticity.sh` bez argumentu vypíše úplný zoznam s príkladmi.
+Postup práce: vetva z aktuálneho `main` v repe, ktorého sa zmena týka (`api`, `web`,
+`data-pipeline` …), overenie cez `./analyticity.sh local:up --workspace`, PR do `main`. Vydanie a
+nasadenie robí správca.
 
 ## Štruktúra
 
@@ -176,6 +121,75 @@ Do `sources/` a `db/` sa zmeny nerobia; patria do príslušného repa. `.env` s�
 Dáta Waze for Cities sa nesmú zverejňovať, preto ich verejné časti aplikácie ukazujú len
 agregované. Každý pohľad s dátami uvádza zdroje: Waze for Cities, Polícia ČR, NDIC (ŘSD ČR),
 © prispievatelia OpenStreetMap.
+
+---
+
+## Pre správcov: nasadenie
+
+> **Táto časť nie je pre študentov.** Študenti nič nevydávajú ani nenasadzujú: aplikáciu
+> spúšťajú lokálne ([Rýchly štart](#rýchly-štart)) a zmeny posielajú cez PR do `main`. Vydanie
+> do `deploy` a nasadenie na server robí len správca projektu, krok po kroku.
+
+Repo pozná dva spôsoby nasadenia. Navzájom sa nemiešajú.
+
+| | Server dexter (produkcia) | Samostatný stack mesta |
+|---|---|---|
+| Súbory | `docker-compose.prod.yml` (centrálna DB, api, web, proxy), `docker-compose.data.yml` (dátový stack Brna), `nginx.conf`, `docker-compose.build.yml` | `cities/<mesto>/docker-compose.yml`, `infrastructure/docker-compose.yml`, `templates/` |
+| Images | registry dexteru `dexter.fit.vutbr.cz/analyticity/analyticity-*`, build lokálne z vetiev `deploy` | `api` a `web` z `ghcr.io/analyticity` (GitHub Actions); dátové služby zatiaľ zo starších `ghcr.io/dp-traffic/*` v `infrastructure/docker-compose.yml` |
+| Konfigurácia | `.env.example`, `.env.data.example` | `cities/<mesto>/.env.example` |
+| Príkazy | `./dexter.sh` z repa servera (`build`, `push`, `remote-sync`, `remote-start`) | `./analyticity.sh setup`, `start`, `deploy`, `update` |
+
+```mermaid
+flowchart LR
+    B[vetva z main] --> PR[PR do main] --> REL["./analyticity.sh release REPO<br/>main → deploy"]
+    REL --> IMG[images z vetvy deploy]
+    IMG --> DEX["dexter: docker-compose.prod.yml<br/>a docker-compose.data.yml"]
+    IMG --> CITY["samostatný stack:<br/>./analyticity.sh deploy MESTO SLUŽBA"]
+```
+
+Images sa buildia **iba z vetvy `deploy`**; `main` sa najprv overí (lokálne alebo cez
+`local:up --workspace`) a až potom vydá príkazom `release` (potrebuje prihlásené
+[GitHub CLI](https://cli.github.com/)).
+
+> **Dátový stack nikdy `down -v`.** DB mesta drží históriu Waze, ktorú Waze znova neposkytne.
+> `db-migrate` s `RUN_OSM_IMPORT=true` naimportuje cestnú sieť nanovo s novými `id` úsekov.
+
+### Samostatný stack mesta
+
+```bash
+docker network create analyticity-network            # raz na server
+cp db/centralDbCreation/.env.example db/centralDbCreation/.env && ./analyticity.sh db:start
+./analyticity.sh setup orp_liberec                    # cities/orp_liberec/ zo šablóny, vyplň .env
+./analyticity.sh ports orp_liberec                    # konflikty portov
+./analyticity.sh start orp_liberec                    # prvé spustenie 10–30 min (import OSM)
+```
+
+V `.env` mesta: jedinečné porty, `WAZE_URL`, `POLICE_REGION`, `BBOX_*` a `OSM_BBOX`, stred mapy
+a názov (`VITE_APP_*`), heslá DB, `SECRET_KEY` (`openssl rand -hex 64`), `API_KEYS` a
+`WEB_API_KEY` (`openssl rand -hex 32`, dva rôzne). DB mesta je `POSTGRES_HOST_BRNO=postgres-timescale`;
+prípona `_BRNO` je historická a platí pre každé mesto.
+
+### Príkazy správcu
+
+```text
+Mestá (samostatné stacky)
+  list | setup <mesto> | ports <mesto>
+  start | restart <mesto|--all> [profil]     profily: tools, extract, transform, apps, mon, all
+  stop | pull | status <mesto|--all>
+  update <mesto|--all>                       pull + restart
+  deploy <mesto> <služba>                    pull + nové spustenie jednej služby
+  logs <mesto> [služba] | topics <mesto> | sync
+
+Centrálna DB
+  db:start | db:stop | db:restart | db:logs | db:status
+
+Vydania
+  release <repo>                             main → deploy: api, web, central_analyticity_db, data-pipeline, simulations
+```
+
+`./analyticity.sh` bez argumentu vypíše úplný zoznam s príkladmi.
+
+---
 
 ## Licencia
 
